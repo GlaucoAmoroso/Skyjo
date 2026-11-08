@@ -1,8 +1,8 @@
 {
   "name": "Skyjo",
   "short_name": "Skyjo",
-  "description": "Skyjo per due, online o sullo stesso schermo",
-  "lang": "it",
+  "description": "Skyjo for two, online or on the same screen",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

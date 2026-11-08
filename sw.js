@@ -1,11 +1,11 @@
-// sw.js — rende l'app utilizzabile senza rete.
-// Strategia: cache + aggiornamento in background (stale-while-revalidate).
-// Tutti i file sono nostri (nessuna libreria esterna): dopo la prima apertura funziona offline.
-// Quando cambiate i file dell'app, incrementate CACHE per forzare il ricaricamento.
-const CACHE = 'skyjo-v2';
+// sw.js — makes the app usable offline.
+// Strategy: cache + background refresh (stale-while-revalidate).
+// All files are ours (PeerJS is loaded from a CDN only for Online mode): after the first visit it works offline.
+// When you change app files, bump CACHE to force an update.
+const CACHE = 'skyjo-v3';
 const CORE = [
   './', './index.html', './styles.css', './app.js', './ui.js', './fx-dom.js',
-  './skyjo-engine.js', './skyjo-store.js', './skyjo-stats.js', './skyjo-fx.js',
+  './skyjo-engine.js', './skyjo-store.js', './skyjo-stats.js', './skyjo-fx.js', './transport-peerjs.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png',
 ];
 
@@ -25,7 +25,7 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // es. segnalazione PeerJS: sempre dalla rete
+  if (url.origin !== self.location.origin) return; // e.g. the PeerJS CDN script: always from the network
 
   e.respondWith((async () => {
     const hit = await caches.match(req, { ignoreSearch: req.mode === 'navigate' });

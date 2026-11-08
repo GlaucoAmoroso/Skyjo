@@ -98,9 +98,9 @@ const isSummary = (g) =>
 
 export function importStats(stats, json) {
   let data;
-  try { data = JSON.parse(json); } catch { throw new Error('File non valido'); }
+  try { data = JSON.parse(json); } catch { throw new Error('Invalid file'); }
   if (!data || data.version !== 1 || !Array.isArray(data.games))
-    throw new Error('Formato statistiche non riconosciuto');
+    throw new Error('Unrecognised stats format');
   let out = stats;
   let added = 0;
   for (const g of data.games.filter(isSummary)) {

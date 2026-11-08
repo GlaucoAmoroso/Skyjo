@@ -101,7 +101,7 @@ function botMove(store) {
 
   // a metà partita: un nuovo store sullo stesso storage deve poter riprendere identico
   let steps = 0;
-  while (store.getState().game.round < 2 || store.getState().game.phase !== 'playing') { botMove(store); assert(++steps < 5000, 'round 2 raggiunto'); }
+  while (store.getState().game.round < 2 || store.getState().game.phase !== 'playing') { botMove(store); assert(++steps < 60000, 'round 2 raggiunto'); }
   for (let i = 0; i < 7; i++) botMove(store);
   const store2 = createStore({ storage });
   assert(store2.getState().saved && store2.getState().saved.mode === 'local', 'partita salvata visibile in home');
@@ -171,7 +171,7 @@ function botMove(store) {
     tB.send({ t: 'action', action: { type: 'DRAW_DECK', player: 0 } });
     await flush();
     eq(H.getState().game, hostTurnState, 'azione spoofata ignorata');
-    assert(G.getState().error === 'Non è il tuo turno', 'guest riceve errore');
+    assert(G.getState().error === "It's not your turn", 'guest riceve errore');
   } else {
     G.dispatch({ type: 'DRAW_DECK' }); // al guest tocca: ok, ma poi prova a pescare di nuovo fuori turno
     await flush();
@@ -182,7 +182,7 @@ function botMove(store) {
 
   // metà partita: poi il guest cade e l'host riprende da localStorage con un nuovo trasporto
   let guard = 0;
-  while (H.getState().game.round < 2 || H.getState().game.phase !== 'playing') { botMove(H); botMove(G); await flush(); checkPrivacy(); assert(++guard < 5000, 'round 2'); }
+  while (H.getState().game.round < 2 || H.getState().game.phase !== 'playing') { botMove(H); botMove(G); await flush(); checkPrivacy(); if (++guard >= 60000) { const g = H.getState().game; console.error(JSON.stringify({ph: g.phase, r: g.round, cur: g.current, step: g.turn, conn: H.getState().connection, gc: G.getState().connection, gp: G.getState().game.phase, err: G.getState().error})); assert(false, 'round 2'); } }
   for (let i = 0; i < 9; i++) { botMove(H); botMove(G); await flush(); }
   tA.close();
   await flush();

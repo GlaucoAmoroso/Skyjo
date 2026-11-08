@@ -1,19 +1,20 @@
 // skyjo-store.js
-// Store minimale (stato + dispatch + subscribe), senza librerie.
+// Minimal store (state + dispatch + subscribe), no libraries.
 //
-// Tre modalità, UNA sola fonte di verità per le regole (l'engine):
-//   'local' : Pass & Play. Lo store esegue l'engine e salva in localStorage ad ogni mossa.
-//   'host'  : uno dei due telefoni. Esegue l'engine, salva, e manda lo stato (con le
-//             carte coperte oscurate) all'altro. Ha il posto 0.
-//   'guest' : l'altro telefono. NON esegue l'engine: manda le azioni all'host e mostra
-//             lo stato che riceve. Ha il posto 1. Non salva la partita (la fonte è l'host).
+// Three modes, ONE source of truth for the rules (the engine):
+//   'local' : Pass & Play. The store runs the engine and saves to localStorage on every move.
+//   'host'  : one of the two phones. Runs the engine, saves, and sends the state (with
+//             face-down cards hidden) to the other. Seat 0.
+//   'guest' : the other phone. Does NOT run the engine: sends actions to the host and shows
+//             the state it receives. Seat 1. Does not save the game (the host is the source).
 //
-// Trasporto (PeerJS/WebRTC verrà dopo) = qualunque oggetto con questa forma:
+// Transport (PeerJS/WebRTC) = any object shaped like:
 //   { send(msg), onMessage(fn), onStatus(fn('open'|'closed')), isOpen(), close() }
-// Lo store non sa nulla di PeerJS: per i test basta un trasporto in memoria.
+// The store knows nothing about PeerJS: tests use an in-memory transport.
 //
 // Protocollo:
 //   guest -> host : {t:'hello', name} | {t:'action', action}
+//   guest -> host : {t:'rematch'}
 //   host -> guest : {t:'welcome', seat, gameId} | {t:'state', gameId, state} | {t:'error', error}
 
 import { createGame, applyAction, redactForPeer } from './skyjo-engine.js';
@@ -86,6 +87,7 @@ export function createStore(opts = {}) {
       phase: rec.game.phase,
       names: rec.game.players.map((p) => p.name),
       totals: rec.game.players.map((p) => p.total),
+      roomCode: rec.roomCode ?? null,
       savedAt: rec.savedAt,
     };
   }
@@ -146,6 +148,8 @@ export function createStore(opts = {}) {
       }
       transport.send({ t: 'welcome', seat: 1, gameId: state.gameId });
       broadcast();
+    } else if (msg.t === 'rematch') {
+      if (state.game.phase === 'gameOver') rematch();
     } else if (msg.t === 'action' && msg.action) {
       // il posto viene imposto dall'host: il guest non può muovere "per conto" dell'host
       const r = applyAction(state.game, { ...msg.action, player: 1 });
@@ -173,7 +177,7 @@ export function createStore(opts = {}) {
     t.onStatus((s) => {
       if (transport !== t) return; // trasporto vecchio, ignorato
       if (s === 'open' && state.mode === 'guest') t.send({ t: 'hello', name: state.myName });
-      if (s === 'closed' && state.connection === 'connected') set({ connection: 'lost' });
+      if (s === 'closed' && (state.connection === 'connected' || state.connection === 'connecting')) set({ connection: 'lost' });
     });
     if (state.mode === 'guest' && t.isOpen()) t.send({ t: 'hello', name: state.myName });
   }
@@ -191,7 +195,7 @@ export function createStore(opts = {}) {
 
   function hostRemote({ config = {}, hostName, roomCode = null } = {}, t) {
     try {
-      const game = createGame({ ...config, playerNames: [clean(hostName, 'Giocatore 1'), 'Giocatore 2'] });
+      const game = createGame({ ...config, playerNames: [clean(hostName, 'Player 1'), 'Player 2'] });
       state = { ...state, mode: 'host', seat: 0, gameId: uid(), roomCode, connection: 'waiting', screen: 'game' };
       commit(game);
       attachTransport(t);
@@ -202,7 +206,7 @@ export function createStore(opts = {}) {
   // Funziona anche per riconnettersi: lo stato precedente resta finché l'host ne manda uno nuovo.
   function joinRemote(name, t) {
     state = {
-      ...state, mode: 'guest', seat: null, myName: clean(name, 'Giocatore 2'),
+      ...state, mode: 'guest', seat: null, myName: clean(name, 'Player 2'),
       connection: 'connecting', screen: state.game ? 'game' : 'connecting', error: null,
     };
     emit();
@@ -211,7 +215,7 @@ export function createStore(opts = {}) {
 
   function resumeLocal() {
     const rec = load(storage, KEYS.game, null);
-    if (!rec || rec.v !== 1 || rec.mode !== 'local') return fail('Nessuna partita locale da riprendere');
+    if (!rec || rec.v !== 1 || rec.mode !== 'local') return fail('No local game to resume');
     closeTransport();
     state = { ...state, mode: 'local', seat: null, gameId: rec.gameId, roomCode: null, connection: 'none', screen: 'game' };
     commit(rec.game);
@@ -220,11 +224,30 @@ export function createStore(opts = {}) {
 
   function resumeHost(t) {
     const rec = load(storage, KEYS.game, null);
-    if (!rec || rec.v !== 1 || rec.mode !== 'host') return fail('Nessuna partita online da riprendere');
+    if (!rec || rec.v !== 1 || rec.mode !== 'host') return fail('No online game to resume');
     state = { ...state, mode: 'host', seat: 0, gameId: rec.gameId, roomCode: rec.roomCode, connection: 'waiting', screen: 'game' };
     commit(rec.game);
     attachTransport(t); // quando l'altro rientra ('hello') riceve lo stato aggiornato
     return { ok: true };
+  }
+
+  // New game with the same rules and players, dealt immediately (host only; the guest asks the host).
+  function rematch() {
+    if (state.mode === 'guest') {
+      if (state.connection !== 'connected' || !transport) return fail('You are not connected');
+      transport.send({ t: 'rematch' });
+      return { ok: true, pending: true };
+    }
+    const cfg = state.game.config;
+    try {
+      const game = createGame({ ...cfg });
+      state = { ...state, gameId: uid() };
+      commit(game);
+      const started = applyAction(game, { type: 'START_ROUND' }); // a rematch deals straight away
+      if (started.ok) commit(started.state);
+      broadcast();
+      return { ok: true };
+    } catch (e) { return fail(e.message); }
   }
 
   function discardSaved() {
@@ -234,14 +257,14 @@ export function createStore(opts = {}) {
 
   function dispatch(action) {
     const { mode, game } = state;
-    if (!game) return fail('Nessuna partita in corso');
+    if (!game) return fail('No game in progress');
     if (mode === 'guest') {
-      if (state.connection !== 'connected' || !transport) return fail('Non sei connesso');
+      if (state.connection !== 'connected' || !transport) return fail('You are not connected');
       transport.send({ t: 'action', action: { ...action, player: state.seat } });
       return { ok: true, pending: true }; // l'esito arriva con il nuovo stato (o con un errore)
     }
     if (mode === 'host' && action.type === 'START_ROUND' && state.connection !== 'connected')
-      return fail("In attesa dell'altro giocatore");
+      return fail("Waiting for the other player");
     const r = applyAction(game, mode === 'host' ? { ...action, player: 0 } : action);
     if (!r.ok) return fail(r.error);
     commit(r.state);
@@ -250,6 +273,14 @@ export function createStore(opts = {}) {
   }
 
   const finishGame = () => dispatch({ type: 'END_GAME' });
+
+  // Leave to the home screen but KEEP the saved game (host or local), so it can be resumed.
+  function pause() {
+    closeTransport();
+    state = { ...state, screen: 'home', mode: null, seat: null, gameId: null, roomCode: null, game: null, connection: 'none', error: null };
+    state = { ...state, saved: readSaved() };
+    emit();
+  }
 
   function leave() {
     closeTransport();
@@ -264,7 +295,7 @@ export function createStore(opts = {}) {
     setScreen: (screen) => set({ screen }),
     clearError: () => set({ error: null }),
     dispatch, startLocal, hostRemote, joinRemote, attachTransport,
-    resumeLocal, resumeHost, discardSaved, finishGame, leave,
+    resumeLocal, resumeHost, rematch, pause, discardSaved, finishGame, leave,
     leaderboard: () => computePlayerStats(state.stats),
     exportStats: () => exportStats(state.stats),
     importStats(json) {
@@ -294,26 +325,26 @@ export function selectView(st) {
     isCurrent: i === g.current,
     isMe: remote ? i === st.seat : i === g.current,
   }));
-  const myTurn = g.phase === 'playing' && (!remote || g.current === st.seat);
   const ready = !remote || st.connection === 'connected';
+  const myTurn = g.phase === 'playing' && ready && (!remote || g.current === st.seat);
 
   let hint = '';
-  if (g.phase === 'lobby') hint = ready ? 'Pronti? Inizia il round' : "In attesa dell'altro giocatore…";
+  if (g.phase === 'lobby') hint = ready ? 'Ready? Start the round' : "Waiting for the other player…";
   else if (g.phase === 'initialReveal') {
     const todo = players.filter((p) => p.needReveal > 0 && (!remote || p.isMe));
-    const carte = (n) => `${n} ${n === 1 ? 'carta' : 'carte'}`;
-    if (!todo.length) hint = "In attesa dell'altro giocatore…";
-    else if (remote) hint = `Scopri ${carte(todo[0].needReveal)}`;
-    else if (todo.length === players.length && todo.every((p) => p.needReveal === todo[0].needReveal)) hint = `Ognuno scopre ${carte(todo[0].needReveal)}`;
-    else hint = todo.map((p) => `${p.name}: scopri ${p.needReveal}`).join(' · ');
+    const carte = (n) => `${n} ${n === 1 ? 'card' : 'cards'}`;
+    if (!todo.length) hint = "Waiting for the other player…";
+    else if (remote) hint = `Reveal ${carte(todo[0].needReveal)}`;
+    else if (todo.length === players.length && todo.every((p) => p.needReveal === todo[0].needReveal)) hint = `Each reveals ${carte(todo[0].needReveal)}`;
+    else hint = todo.map((p) => `${p.name}: reveal ${p.needReveal}`).join(' · ');
   } else if (g.phase === 'playing') {
-    if (!myTurn) hint = `Tocca a ${g.players[g.current].name}`;
-    else if (g.turn.step === 'draw') hint = 'Pesca dal mazzo o prendi lo scarto';
+    if (!myTurn) hint = `${g.players[g.current].name}'s turn`;
+    else if (g.turn.step === 'draw') hint = 'Draw from the deck or take the discard';
     else if (g.turn.step === 'place')
-      hint = g.turn.from === 'deck' ? 'Scambiala con una carta oppure scartala' : 'Scambiala con una carta';
-    else if (g.turn.step === 'flip') hint = 'Scopri una carta coperta';
-  } else if (g.phase === 'roundOver') hint = 'Round finito';
-  else if (g.phase === 'gameOver') hint = 'Partita finita';
+      hint = g.turn.from === 'deck' ? 'Swap it with a card, or discard it' : 'Swap it with a card';
+    else if (g.turn.step === 'flip') hint = 'Flip a face-down card';
+  } else if (g.phase === 'roundOver') hint = 'Round over';
+  else if (g.phase === 'gameOver') hint = 'Game over';
 
   return {
     phase: g.phase,

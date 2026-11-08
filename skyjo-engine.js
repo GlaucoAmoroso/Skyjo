@@ -10,7 +10,7 @@ export const DECK_DISTRIBUTION = (() => {
 })();
 
 export const DEFAULT_CONFIG = {
-  playerNames: ['Giocatore 1', 'Giocatore 2'],
+  playerNames: ['Player 1', 'Player 2'],
   rows: 3,
   cols: 4,
   initialReveal: 2,
@@ -54,9 +54,9 @@ export function createGame(config = {}, seed = (Math.random() * 2 ** 32) >>> 0) 
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const n = cfg.playerNames.length;
   const cells = cfg.rows * cfg.cols;
-  if (n < 2) fail('Servono almeno 2 giocatori');
-  if (cfg.initialReveal < 1 || cfg.initialReveal > cells) fail('Carte iniziali scoperte non valide');
-  if (cells * n + 1 > 150) fail('Mazzo insufficiente per questa griglia/numero di giocatori');
+  if (n < 2) fail('At least 2 players are required');
+  if (cfg.initialReveal < 1 || cfg.initialReveal > cells) fail('Invalid number of initially revealed cards');
+  if (cells * n + 1 > 150) fail('Not enough cards in the deck for this grid / number of players');
   return {
     config: cfg,
     seed,
@@ -94,7 +94,7 @@ function clearColumns(s, p) {
 
 function drawFromPile(s) {
   if (s.drawPile.length === 0) {
-    if (s.discardPile.length < 2) fail('Nessuna carta disponibile da pescare');
+    if (s.discardPile.length < 2) fail('No card available to draw');
     const top = s.discardPile.pop();
     [s.drawPile, s.seed] = shuffle(s.discardPile, s.seed);
     s.discardPile = [top];
@@ -103,15 +103,15 @@ function drawFromPile(s) {
 }
 
 function assertTurn(s, a, step) {
-  if (s.phase !== 'playing') fail('Il round non è in corso');
-  if (a.player !== s.current) fail('Non è il tuo turno');
-  if (s.turn.step !== step) fail(`Azione non valida ora (attesa: ${s.turn.step})`);
+  if (s.phase !== 'playing') fail('The round is not in progress');
+  if (a.player !== s.current) fail("It's not your turn");
+  if (s.turn.step !== step) fail(`Action not allowed now (expected: ${s.turn.step})`);
 }
 
 function assertCell(p, index, wantUp) {
   const cell = p.grid[index];
-  if (cell === undefined || cell === null) fail('Carta inesistente');
-  if (wantUp !== undefined && cell.up !== wantUp) fail(wantUp ? 'Carta già coperta' : 'Carta già scoperta');
+  if (cell === undefined || cell === null) fail('No such card');
+  if (wantUp !== undefined && cell.up !== wantUp) fail(wantUp ? 'Card is already face down' : 'Card is already face up');
   return cell;
 }
 
@@ -147,7 +147,7 @@ function endRound(s) {
 // ---------- Azioni ----------
 const handlers = {
   START_ROUND(s) {
-    if (s.phase !== 'lobby' && s.phase !== 'roundOver') fail('Round già in corso');
+    if (s.phase !== 'lobby' && s.phase !== 'roundOver') fail('A round is already in progress');
     const { rows, cols } = s.config;
     s.round += 1;
     let deck;
@@ -162,10 +162,10 @@ const handlers = {
   },
 
   REVEAL(s, a) { // scoperta iniziale: ognuno scopre N carte, in qualsiasi ordine
-    if (s.phase !== 'initialReveal') fail('Non è la fase di scoperta iniziale');
+    if (s.phase !== 'initialReveal') fail('Not in the initial reveal phase');
     const p = s.players[a.player];
-    if (!p) fail('Giocatore inesistente');
-    if (countUp(p) >= s.config.initialReveal) fail('Hai già scoperto tutte le carte iniziali');
+    if (!p) fail('No such player');
+    if (countUp(p) >= s.config.initialReveal) fail('You already revealed all your starting cards');
     assertCell(p, a.index, false).up = true;
     if (s.players.every((q) => countUp(q) >= s.config.initialReveal)) {
       s.players.forEach((q) => clearColumns(s, q));
@@ -185,7 +185,7 @@ const handlers = {
 
   TAKE_DISCARD(s, a) {
     assertTurn(s, a, 'draw');
-    if (s.discardPile.length === 0) fail('Scarti vuoti');
+    if (s.discardPile.length === 0) fail('The discard pile is empty');
     s.turn = { step: 'place', drawn: s.discardPile.pop(), from: 'discard' };
   },
 
@@ -200,7 +200,7 @@ const handlers = {
 
   DISCARD_DRAWN(s, a) { // solo se pescata dal mazzo: poi si DEVE scoprire una carta coperta
     assertTurn(s, a, 'place');
-    if (s.turn.from !== 'deck') fail('La carta presa dagli scarti va obbligatoriamente scambiata');
+    if (s.turn.from !== 'deck') fail('A card taken from the discard pile must be swapped in');
     s.discardPile.push(s.turn.drawn);
     s.turn = { step: 'flip', drawn: null, from: null };
   },
@@ -212,7 +212,7 @@ const handlers = {
   },
 
   END_GAME(s) { // chiusura volontaria (utile con targetScore = null): solo a fine round
-    if (s.phase !== 'roundOver') fail('Puoi chiudere la partita solo a fine round');
+    if (s.phase !== 'roundOver') fail('You can only end the game when a round is over');
     s.phase = 'gameOver';
   },
 };

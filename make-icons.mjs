@@ -1,5 +1,5 @@
-// make-icons.mjs — genera le icone PNG (192, 512, 180 per iOS) senza dipendenze.
-// Uso: node make-icons.mjs
+// make-icons.mjs — generates the PNG icons (192, 512, 180 for iOS) with no dependencies.
+// Usage: node make-icons.mjs
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 
@@ -25,16 +25,23 @@ function png(size) {
   for (let y = 0; y < size; y++) {
     raw[y * (size * 4 + 1)] = 0;
     for (let x = 0; x < size; x++) {
-      let rgb = [246, 241, 231]; // avorio
+      let rgb = [246, 241, 231]; // ivory
       const mix = (c, a) => { rgb = rgb.map((v, i) => v * (1 - a) + c[i] * a); };
       mix([228, 217, 195], cover(sdRound(x, y, 256 * s, 256 * s, 111 * s, 161 * s, 35 * s)));
       mix([255, 253, 248], cover(sdRound(x, y, 256 * s, 256 * s, 109 * s, 159 * s, 34 * s)));
       const inner = cover(sdRound(x, y, 256 * s, 256 * s, 96 * s, 146 * s, 24 * s));
       const stripe = (((x + y) / s) % 44) < 22 ? [44, 107, 87] : [31, 77, 63];
       mix(stripe, inner);
-      const ux = ((x - 256 * s) + (y - 256 * s)) / Math.SQRT2;
-      const uy = ((y - 256 * s) - (x - 256 * s)) / Math.SQRT2;
-      mix([216, 178, 74], cover(sdRound(ux, uy, 0, 0, 30 * s, 30 * s, 4 * s)));
+      // heart: (x²+y²−1)³ − x²y³ ≤ 0, 3×3 supersampling for smooth edges
+      let hit = 0;
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+        const hx = ((x + (i + .5) / 3) - 256 * s) / (66 * s);
+        const hy = -((y + (j + .5) / 3) - 262 * s) / (66 * s);
+        const q = hx * hx + hy * hy - 1;
+        if (q * q * q - hx * hx * hy * hy * hy <= 0) hit++;
+      }
+      const t = Math.min(1, Math.max(0, (x + y - 300 * s) / (260 * s)));
+      mix([255 - 38 * t, 179 - 110 * t, 193 - 87 * t], hit / 9);
       const o = y * (size * 4 + 1) + 1 + x * 4;
       raw[o] = rgb[0]; raw[o + 1] = rgb[1]; raw[o + 2] = rgb[2]; raw[o + 3] = 255;
     }
@@ -50,5 +57,5 @@ function png(size) {
 
 for (const [name, size] of [['icon-192.png', 192], ['icon-512.png', 512], ['apple-touch-icon.png', 180]]) {
   writeFileSync(name, png(size));
-  console.log('creato', name);
+  console.log('created', name);
 }

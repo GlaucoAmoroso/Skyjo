@@ -15,7 +15,7 @@
 }
 /* Dark theme: warm charcoal (not blue). The cards stay light so numbers keep their contrast. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #15130f; --bg2: #0f0e0b; --surface: #211e17; --surface2: #1a1812; --line: #38332a;
     --ink: #f0e9d6; --muted: #a39a82;
     --accent: #2e7a62; --accent2: #3a9078; --accent-ink: #f8f2e2;
@@ -28,6 +28,35 @@
     --shadow-ink: 0,0,0;
   }
 }
+/* manual override from the Theme chips */
+:root[data-theme="light"] {
+  --bg: #f6f1e7; --bg2: #ebe2d0; --surface: #fffdf8; --surface2: #faf5ea; --line: #e4d9c3;
+  --ink: #2b2923; --muted: #7b725e;
+  --accent: #1f4d3f; --accent2: #2c6b57; --accent-ink: #f8f2e2;
+  --gold: #c39a2e; --gold-soft: #f5e8bd; --danger: #a63d33;
+  --shadow-card: 0 1px 1px rgba(70,55,25,.10), 0 3px 8px rgba(70,55,25,.16);
+  --shadow-lift: 0 16px 24px rgba(70,55,25,.26), 0 4px 8px rgba(70,55,25,.14);
+  --ease: cubic-bezier(.22,.8,.24,1);
+  --serif: Georgia, 'Times New Roman', serif;
+  --bg-glow: #fffef9; --brand: #1f4d3f; --placeholder: #b3a98f; --gold-line: #c39a2e;
+  --deck-a: #fffdf8; --deck-b: #d9cdb3; --empty-line: #d6caae; --empty-bg: rgba(255,255,255,.35);
+  --panel-shadow: rgba(70,55,25,.08); --overlay: rgba(43,41,35,.42); --toast-bg: #2b2923;
+  --shadow-ink: 70,55,25;
+}
+:root[data-theme="dark"] {
+    --bg: #15130f; --bg2: #0f0e0b; --surface: #211e17; --surface2: #1a1812; --line: #38332a;
+    --ink: #f0e9d6; --muted: #a39a82;
+    --accent: #2e7a62; --accent2: #3a9078; --accent-ink: #f8f2e2;
+    --gold: #d6ad40; --gold-soft: rgba(214,173,64,.16); --danger: #c4574b;
+    --shadow-card: 0 1px 1px rgba(0,0,0,.4), 0 3px 8px rgba(0,0,0,.5);
+    --shadow-lift: 0 16px 24px rgba(0,0,0,.6), 0 4px 8px rgba(0,0,0,.4);
+    --bg-glow: #26221a; --brand: #7fc7aa; --placeholder: #6f6753; --gold-line: #d6ad40;
+    --deck-a: #3a352a; --deck-b: #26231b; --empty-line: #4a4436; --empty-bg: rgba(255,255,255,.04);
+    --panel-shadow: rgba(0,0,0,.35); --overlay: rgba(0,0,0,.6); --toast-bg: #f0e9d6;
+    --shadow-ink: 0,0,0;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 *, *::before, *::after { box-sizing: border-box; }
 html { color-scheme: light dark; -webkit-text-size-adjust: 100%; }
 body {
@@ -155,7 +184,7 @@ ul.list { margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px
 }
 /* a little heart on the back of every card */
 .f-back::after { content: ''; position: absolute; left: 50%; top: 50%; width: 34cqw; height: 34cqw; transform: translate(-50%, -48%);
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffb3c1'/%3E%3Cstop offset='1' stop-color='%23d9456a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E") center / contain no-repeat;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffffff'/%3E%3Cstop offset='1' stop-color='%23e9e4d6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E") center / contain no-repeat;
   filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.35)); }
 
 .f-front { transform: rotateY(180deg); display: flex; align-items: center; justify-content: center; font-family: var(--serif);

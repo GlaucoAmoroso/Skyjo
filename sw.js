@@ -2,7 +2,7 @@
 // Strategy: cache + background refresh (stale-while-revalidate).
 // All files are ours (PeerJS is loaded from a CDN only for Online mode): after the first visit it works offline.
 // When you change app files, bump CACHE to force an update.
-const CACHE = 'skyjo-v3';
+const CACHE = 'skyjo-v4';
 const CORE = [
   './', './index.html', './styles.css', './app.js', './ui.js', './fx-dom.js',
   './skyjo-engine.js', './skyjo-store.js', './skyjo-stats.js', './skyjo-fx.js', './transport-peerjs.js',

@@ -127,7 +127,7 @@ function sheetHtml(st, v, hidden) {
 }
 
 // ---------- screens ----------
-function homeHtml(st) {
+function homeHtml(st, theme = 'auto') {
   const s = st.saved;
   let resume = '';
   if (s && s.mode === 'local') {
@@ -158,6 +158,7 @@ function homeHtml(st) {
       <button data-act="newLocal" class="btn btn-primary">Pass &amp; Play<small>One phone, works even with no Wi-Fi</small></button>
       <button data-act="online" class="btn btn-secondary">Online · 2 phones<small>Each on their own phone</small></button>
       <button data-act="stats" class="btn btn-secondary">Stats</button>
+      <div class="row" style="justify-content:center"><span class="muted small">Theme</span>${['auto', 'light', 'dark'].map((t) => chip(t[0].toUpperCase() + t.slice(1), theme === t, `data-act="theme" data-v="${t}"`)).join('')}</div>
     </div>
   </main>`;
 }
@@ -343,6 +344,7 @@ export function createApp(store, opts = {}) {
   const confirmFn = opts.confirm ?? ((m) => (typeof globalThis.confirm === 'function' ? globalThis.confirm(m) : true));
   const later = opts.setTimeout ?? setTimeout;
   const download = opts.download ?? (() => {});
+  const getTheme = opts.getTheme ?? (() => 'auto');
   const online = opts.online ?? null; // { newCode, normalize, host(code)->Promise<transport>, join(code)->transport }
   const clipboard = opts.clipboard ?? (async (text) => { await globalThis.navigator?.clipboard?.writeText(text); });
   const share = opts.share ?? (async (data) => { if (!globalThis.navigator?.share) throw new Error('no share'); await globalThis.navigator.share(data); });
@@ -403,7 +405,7 @@ export function createApp(store, opts = {}) {
     else if (st.screen === 'join') body = joinHtml(draft, ui.code);
     else if (st.screen === 'connecting') body = connectingHtml(st, ui);
     else if (st.screen === 'stats') body = statsHtml(st, store.leaderboard());
-    else body = homeHtml(st);
+    else body = homeHtml(st, getTheme());
     const toast = st.error ? { text: st.error, kind: 'error' } : ui.toast;
     return body + (ui.menu && st.game ? menuHtml(st) : '') + toastHtml(toast);
   }
@@ -532,6 +534,7 @@ export function createApp(store, opts = {}) {
         if (confirmFn('Quit the game? If it is not finished it will be lost.')) { ui.menu = false; ui.sheetHidden = false; store.leave(); }
         break;
 
+      case 'theme': opts.setTheme?.(d.v); onChange(); break;
       case 'export': download('skyjo-stats.json', store.exportStats()); break;
       default: break;
     }

@@ -41,7 +41,7 @@ function png(size) {
         if (q * q * q - hx * hx * hy * hy * hy <= 0) hit++;
       }
       const t = Math.min(1, Math.max(0, (x + y - 300 * s) / (260 * s)));
-      mix([255 - 38 * t, 179 - 110 * t, 193 - 87 * t], hit / 9);
+      mix([255 - 20 * t, 255 - 26 * t, 255 - 40 * t], hit / 9);
       const o = y * (size * 4 + 1) + 1 + x * 4;
       raw[o] = rgb[0]; raw[o + 1] = rgb[1]; raw[o + 2] = rgb[2]; raw[o + 3] = 255;
     }

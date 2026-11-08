@@ -22,7 +22,14 @@ let hostTransport = null;
 const online = { ...net, host: async (code) => (hostTransport = await net.host(code)) };
 
 const store = createStore();
-const app = createApp(store, { onChange: paint, download, online });
+const THEME_KEY = 'skyjo:theme:v1';
+const readTheme = () => { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch { return 'auto'; } };
+const applyTheme = (t) => {
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+};
+applyTheme(readTheme());
+const setTheme = (t) => { try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ } applyTheme(t); };
+const app = createApp(store, { onChange: paint, download, online, getTheme: readTheme, setTheme });
 
 // "Smart" repaint: elements with a data-key whose HTML did not change stay the same DOM nodes,
 // so running animations are not interrupted by a later repaint.

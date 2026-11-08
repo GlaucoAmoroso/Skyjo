@@ -1,11 +1,11 @@
 // sw.js — rende l'app utilizzabile senza rete.
 // Strategia: cache + aggiornamento in background (stale-while-revalidate).
-// Il file di Tailwind (CDN) viene messo in cache la prima volta che l'app si apre CON rete.
+// Tutti i file sono nostri (nessuna libreria esterna): dopo la prima apertura funziona offline.
 // Quando cambiate i file dell'app, incrementate CACHE per forzare il ricaricamento.
-const CACHE = 'skyjo-v1';
+const CACHE = 'skyjo-v2';
 const CORE = [
-  './', './index.html', './app.js', './ui.js',
-  './skyjo-engine.js', './skyjo-store.js', './skyjo-stats.js',
+  './', './index.html', './styles.css', './app.js', './ui.js', './fx-dom.js',
+  './skyjo-engine.js', './skyjo-store.js', './skyjo-stats.js', './skyjo-fx.js',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png',
 ];
 
@@ -25,15 +25,13 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  const ours = url.origin === self.location.origin;
-  const tailwind = url.hostname === 'cdn.tailwindcss.com';
-  if (!ours && !tailwind) return; // es. segnalazione PeerJS: sempre dalla rete
+  if (url.origin !== self.location.origin) return; // es. segnalazione PeerJS: sempre dalla rete
 
   e.respondWith((async () => {
     const hit = await caches.match(req, { ignoreSearch: req.mode === 'navigate' });
     const refresh = fetch(req)
       .then((res) => {
-        if (res && (res.ok || res.type === 'opaque')) caches.open(CACHE).then((c) => c.put(req, res.clone()));
+        if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
         return res;
       })
       .catch(() => null);

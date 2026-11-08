@@ -1,6 +1,8 @@
-// app.js — colla tra DOM e ui.js. Niente logica di gioco qui.
+// app.js — colla tra DOM, interfaccia (ui.js) e animazioni (fx-dom.js). Niente logica di gioco qui.
 import { createStore } from './skyjo-store.js';
 import { createApp } from './ui.js';
+import { diffEvents } from './skyjo-fx.js';
+import { capture, play } from './fx-dom.js';
 
 const root = document.getElementById('app');
 
@@ -16,10 +18,37 @@ function download(name, text) {
 const store = createStore();
 const app = createApp(store, { onChange: paint, download });
 
+// Ridisegno "intelligente": gli elementi con data-key il cui HTML non è cambiato restano gli stessi nodi del DOM,
+// così le animazioni in corso non vengono interrotte da un ridisegno successivo.
+let prevSigs = new Map();
+function morph(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  const sigs = new Map();
+  tpl.content.querySelectorAll('[data-key]').forEach((n) => {
+    const key = n.dataset.key;
+    const sig = n.outerHTML;
+    sigs.set(key, sig);
+    if (prevSigs.get(key) === sig) {
+      const live = root.querySelector(`[data-key="${key}"]`);
+      if (live) n.replaceWith(live);
+    }
+  });
+  root.replaceChildren(tpl.content);
+  prevSigs = sigs;
+}
+
+let prevGame = null;
 function paint() {
+  const st = store.getState();
+  const game = st.screen === 'game' ? st.game : null;
+  const events = diffEvents(prevGame, game); // cosa è appena successo, da animare
+  const snap = capture(root, events);        // posizioni di partenza (prima del ridisegno)
   const scrollY = window.scrollY;
-  root.innerHTML = app.render();
+  morph(app.render());
   window.scrollTo(0, scrollY);
+  play(root, events, snap);                  // animazioni (dopo il ridisegno)
+  prevGame = game;
 }
 
 root.addEventListener('click', (e) => {
@@ -41,8 +70,7 @@ paint();
 navigator.storage?.persist?.().catch(() => {});
 
 // Schermo acceso mentre si gioca (se supportato).
-let wake = null;
-const keepAwake = async () => { try { wake = await navigator.wakeLock?.request('screen'); } catch { /* non supportato */ } };
+const keepAwake = async () => { try { await navigator.wakeLock?.request('screen'); } catch { /* non supportato */ } };
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
 keepAwake();
 

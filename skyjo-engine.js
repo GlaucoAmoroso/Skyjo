@@ -70,6 +70,7 @@ export function createGame(config = {}, seed = (Math.random() * 2 ** 32) >>> 0) 
     finisher: null,
     turn: { step: null, drawn: null, from: null }, // step: draw | place | flip
     roundHistory: [],
+    lastMove: null, // ultima mossa valida: serve all'interfaccia per sapere cosa animare
   };
 }
 
@@ -223,6 +224,7 @@ export function applyAction(state, action) {
     const h = handlers[action.type];
     if (!h) fail(`Azione sconosciuta: ${action.type}`);
     h(s, action);
+    s.lastMove = { type: action.type, player: action.player ?? null, index: action.index ?? null };
     return { ok: true, state: s };
   } catch (e) {
     if (e instanceof RuleError) return { ok: false, error: e.message };

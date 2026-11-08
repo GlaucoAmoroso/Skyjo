@@ -25,13 +25,16 @@ function png(size) {
   for (let y = 0; y < size; y++) {
     raw[y * (size * 4 + 1)] = 0;
     for (let x = 0; x < size; x++) {
-      let rgb = [11, 18, 32];
+      let rgb = [246, 241, 231]; // avorio
       const mix = (c, a) => { rgb = rgb.map((v, i) => v * (1 - a) + c[i] * a); };
-      mix([255, 255, 255], cover(sdRound(x, y, 256 * s, 256 * s, 110 * s, 160 * s, 34 * s)));
-      const inner = cover(sdRound(x, y, 256 * s, 256 * s, 98 * s, 148 * s, 24 * s));
-      const stripe = (((x + y) / s) % 40) < 20 ? [29, 78, 216] : [30, 58, 138];
+      mix([228, 217, 195], cover(sdRound(x, y, 256 * s, 256 * s, 111 * s, 161 * s, 35 * s)));
+      mix([255, 253, 248], cover(sdRound(x, y, 256 * s, 256 * s, 109 * s, 159 * s, 34 * s)));
+      const inner = cover(sdRound(x, y, 256 * s, 256 * s, 96 * s, 146 * s, 24 * s));
+      const stripe = (((x + y) / s) % 44) < 22 ? [44, 107, 87] : [31, 77, 63];
       mix(stripe, inner);
-      mix([251, 191, 36], cover(Math.hypot(x - 256 * s, y - 256 * s) - 46 * s));
+      const ux = ((x - 256 * s) + (y - 256 * s)) / Math.SQRT2;
+      const uy = ((y - 256 * s) - (x - 256 * s)) / Math.SQRT2;
+      mix([216, 178, 74], cover(sdRound(ux, uy, 0, 0, 30 * s, 30 * s, 4 * s)));
       const o = y * (size * 4 + 1) + 1 + x * 4;
       raw[o] = rgb[0]; raw[o + 1] = rgb[1]; raw[o + 2] = rgb[2]; raw[o + 3] = 255;
     }

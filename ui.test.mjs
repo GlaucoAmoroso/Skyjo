@@ -36,25 +36,36 @@ assert(html.includes('Classico 3×4') && html.includes('Variante 4×5') && !dirt
 app.input('n1', 'Anna');
 app.click({ act: 'preset', rows: '4', cols: '5' });
 assert(app.render().includes('20 carte a testa'), 'preset 4×5');
-assert(/bg-amber-400[^>]*>150</.test(app.render()), 'obiettivo suggerito 150 per 4×5');
+assert(/data-v="150" class="chip on"/.test(app.render()), 'obiettivo suggerito 150 per 4×5');
 app.click({ act: 'step', field: 'reveal', d: '1' });
 app.click({ act: 'step', field: 'reveal', d: '1' }); // 2 -> 4
-app.click({ act: 'target', v: '200' });
+app.click({ act: 'target', v: 'none' }); // senza limite: si chiude a mano dopo 3 round
 app.click({ act: 'start' });
 
 let st = store.getState();
 assert(st.screen === 'game' && st.game.phase === 'initialReveal', 'partita avviata');
-assert(st.game.config.initialReveal === 4 && st.game.config.rows === 4 && st.game.config.targetScore === 200, 'impostazioni applicate');
+assert(st.game.config.initialReveal === 4 && st.game.config.rows === 4 && st.game.config.targetScore === null, 'impostazioni applicate');
 assert(st.game.players[0].name === 'Anna' && st.game.players[1].name === 'Giocatore 2', 'nomi (default per il secondo)');
 html = app.render();
-assert(html.includes('Anna: scopri 4 carte'), 'hint scoperta iniziale');
+assert(html.includes('Ognuno scopre 4 carte'), 'hint scoperta iniziale');
 assert(clickables(html).filter((d) => d.act === 'cell').length === 40, 'in scoperta iniziale tutte le 40 carte coperte sono toccabili');
 
 const PLAY = new Set(['cell', 'draw', 'take', 'discard', 'next']);
 const seen = new Set();
+const seatOrder = (h) => [...h.matchAll(/aria-label="Griglia di ([^"]+)"/g)].map((m) => m[1]).join('|');
+const firstOrder = seatOrder(html);
+assert(firstOrder === 'Anna|Giocatore 2', 'ordine fisso: giocatore 1 poi giocatore 2');
 let n = 0;
 while (store.getState().game.phase !== 'gameOver') {
   html = app.render();
+  assert(seatOrder(html) === firstOrder, 'il tavolo non deve cambiare disposizione tra un turno e l\'altro');
+  assert(!/data-v="null"/.test(html), 'nessun valore nullo nelle carte');
+  if (store.getState().game.phase === 'roundOver' && store.getState().game.round >= 3) {
+    assert(html.includes('Chiudi la partita qui'), 'pulsante di chiusura a fine round');
+    seen.add('finish');
+    app.click({ act: 'finish' });
+    continue;
+  }
   assert(!dirty(html), 'HTML pulito in fase ' + store.getState().game.phase + ': ' + (html.match(/.{20}(undefined|NaN|\[object|null<).{20}/) || [''])[0]);
   const c = clickables(html).filter((d) => PLAY.has(d.act));
   assert(c.length > 0, 'UI bloccata: nessuna azione in fase ' + store.getState().game.phase);

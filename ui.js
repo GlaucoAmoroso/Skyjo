@@ -1,7 +1,8 @@
-// ui.js — Interfaccia di Skyjo (mobile-first, Tailwind).
+// ui.js — Interfaccia di Skyjo.
 //  - render(): produce una stringa HTML a partire dallo stato dello store. Nessun accesso al DOM.
 //  - click()/input(): trasformano i tocchi in azioni dello store.
-// app.js fa solo da colla con il DOM: così tutta l'interfaccia si può testare in Node.
+// app.js fa da colla con il DOM (e con le animazioni): così l'interfaccia si testa in Node.
+// Lo stile sta tutto in styles.css.
 
 import { selectView, suggestedTarget, memoryStorage } from './skyjo-store.js';
 import { recentGames } from './skyjo-stats.js';
@@ -15,23 +16,22 @@ const num = (n) => (n === null || n === undefined ? '–' : String(Math.round(n 
 const tone = (v) => (v < 0 ? 'neg' : v === 0 ? 'zero' : v <= 4 ? 'low' : v <= 8 ? 'mid' : 'high');
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-const BTN = 'w-full rounded-2xl px-5 py-4 text-lg font-semibold transition active:scale-[.98]';
-const PRIMARY = `${BTN} bg-amber-400 text-slate-900`;
-const SECONDARY = `${BTN} bg-slate-800 text-slate-100`;
-const GHOST = `${BTN} bg-transparent text-slate-300 border border-slate-700`;
+const chip = (label, active, attrs) => `<button ${attrs} class="chip${active ? ' on' : ''}">${label}</button>`;
 
-const chip = (label, active, attrs) =>
-  `<button ${attrs} class="rounded-full px-4 py-2 text-sm font-semibold ${active ? 'bg-amber-400 text-slate-900' : 'bg-slate-800 text-slate-200'}">${label}</button>`;
-
-// ---------- componenti ----------
-// Una carta. Se è un bersaglio valido diventa un bottone con data-act="cell".
-function card(c, { target = false, p = 0, i = 0 } = {}) {
-  if (c === null) return '<div class="card card-empty"></div>';
-  const cls = `card ${c.up ? `tone-${tone(c.v)}` : 'card-back'}${target ? ' is-target' : ''}`;
-  const inner = c.up ? `<span>${c.v}</span>` : '';
-  if (!target) return `<div class="${cls}">${inner}</div>`;
-  const label = c.up ? `Carta ${i + 1}, valore ${c.v}` : `Carta ${i + 1}, coperta`;
-  return `<button class="${cls}" data-act="cell" data-p="${p}" data-i="${i}" aria-label="${label}">${inner}</button>`;
+// ---------- la carta ----------
+// Ha sempre dorso e fronte (serve per l'animazione di capovolgimento).
+// Il valore di una carta coperta NON finisce mai nell'HTML.
+// act != '' => è un bottone (data-act); hot => evidenziata come mossa possibile.
+function card(c, { key = '', act = '', data = '', hot = false, label = '' } = {}) {
+  const k = key ? ` data-key="${key}"` : '';
+  if (c === null) return `<div class="card card-empty"${k}></div>`;
+  const front = c.up && c.v !== null
+    ? `<span class="face f-front tone-${tone(c.v)}" data-v="${c.v}"><b>${c.v}</b></span>`
+    : '';
+  const inner = `<span class="card-inner"><span class="face f-back"></span>${front}</span>`;
+  const cls = `card${c.up ? ' up' : ''}${hot ? ' is-target' : ''}`;
+  if (!act) return `<div class="${cls}"${k}>${inner}</div>`;
+  return `<button class="${cls}"${k} data-act="${act}" ${data} aria-label="${esc(label)}">${inner}</button>`;
 }
 
 function isTarget(st, v, pl, c) {
@@ -44,83 +44,86 @@ function isTarget(st, v, pl, c) {
   return false;
 }
 
-function playerBlock(st, v, pl, { compact }) {
-  const cfg = st.game.config;
-  const maxW = Math.round(cfg.cols * 76 * (compact ? 0.64 : 1));
-  const cells = pl.grid.map((c, i) => card(c, { target: isTarget(st, v, pl, c), p: pl.index, i })).join('');
+// Un giocatore: pannello con nome, punti e griglia. L'ordine dei pannelli NON cambia mai durante la partita.
+function seatHtml(st, v, pl) {
+  const { rows, cols } = st.game.config;
+  const ar = ((cols * 3) / (rows * 4)).toFixed(3); // larghezza per unità di altezza (carta 3:4)
+  const cells = pl.grid.map((c, i) => {
+    const hot = isTarget(st, v, pl, c);
+    const label = c ? (c.up ? `Carta ${i + 1}, valore ${c.v}` : `Carta ${i + 1}, coperta`) : '';
+    return card(c, { key: `c-${pl.index}-${i}`, act: hot ? 'cell' : '', data: `data-p="${pl.index}" data-i="${i}"`, hot, label });
+  }).join('');
   const turn = pl.isCurrent && v.phase === 'playing';
-  return `<section aria-label="Griglia di ${esc(pl.name)}">
-    <div class="mx-3 mb-1.5 flex items-center justify-between rounded-xl px-3 py-1.5 ${turn ? 'bg-amber-400 text-slate-900' : 'bg-slate-800 text-slate-200'}">
-      <span class="truncate font-semibold">${esc(pl.name)}${turn ? ' · turno' : ''}</span>
-      <span class="shrink-0 pl-2 text-sm tabular-nums">Tot ${pl.total} · Scoperte ${pl.shown}</span>
+  const active = turn || (v.phase === 'initialReveal' && pl.needReveal > 0);
+  return `<section class="seat panel${active ? ' active' : ''}" aria-label="Griglia di ${esc(pl.name)}">
+    <div class="seat-head">
+      <span class="seat-name truncate">${esc(pl.name)}${turn ? ' <span class="turn-dot">· turno</span>' : ''}</span>
+      <span class="row" style="gap:6px"><span class="pill">Tot ${pl.total}</span><span class="pill">Scoperte ${pl.shown}</span></span>
     </div>
-    <div class="mx-auto px-3" style="max-width:${maxW + 24}px">
-      <div class="grid gap-1.5" style="grid-template-columns:repeat(${cfg.cols},minmax(0,1fr))">${cells}</div>
+    <div class="grid-wrap" style="--ar:${ar};--cols:${cols}">
+      <div class="cards" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells}</div>
     </div>
   </section>`;
 }
 
+// Mazzo, scarti e carta in mano: tre posti sempre presenti (il layout non si sposta mai).
 function pilesHtml(v) {
   const canDraw = v.phase === 'playing' && v.myTurn && v.step === 'draw';
   const canTake = canDraw && v.discardTop !== null;
-  const deck = canDraw
-    ? '<button data-act="draw" class="card card-back is-target" aria-label="Pesca dal mazzo"></button>'
-    : '<div class="card card-back"></div>';
+  const deck = card({ up: false }, { key: 'deck', act: canDraw ? 'draw' : '', hot: canDraw, label: 'Pesca dal mazzo' });
   const discard = v.discardTop === null
-    ? '<div class="card card-empty"></div>'
-    : canTake
-      ? `<button data-act="take" class="card tone-${tone(v.discardTop)} is-target" aria-label="Prendi lo scarto, valore ${v.discardTop}"><span>${v.discardTop}</span></button>`
-      : `<div class="card tone-${tone(v.discardTop)}"><span>${v.discardTop}</span></div>`;
-  const held = v.held === null
-    ? ''
-    : `<div class="flex w-16 flex-col items-center gap-1">
-         <div class="card tone-${tone(v.held)} w-full"><span>${v.held}</span></div>
-         <div class="text-xs text-amber-300">In mano</div>
-         ${v.heldFrom === 'deck' ? '<button data-act="discard" class="rounded-lg bg-slate-700 px-3 py-1.5 text-sm font-medium text-slate-100">Scarta</button>' : ''}
-       </div>`;
-  return `<div class="my-3 flex items-start justify-center gap-5">
-    <div class="flex w-16 flex-col items-center gap-1">${deck}<div class="text-xs text-slate-400">Mazzo · ${v.drawCount}</div></div>
-    <div class="flex w-16 flex-col items-center gap-1">${discard}<div class="text-xs text-slate-400">Scarti</div></div>
-    ${held}
+    ? card(null, { key: 'discard' })
+    : card({ up: true, v: v.discardTop }, { key: 'discard', act: canTake ? 'take' : '', hot: canTake, label: `Prendi lo scarto, valore ${v.discardTop}` });
+  const held = v.held === null ? card(null, { key: 'held' }) : card({ up: true, v: v.held }, { key: 'held' });
+  const canDiscard = v.held !== null && v.heldFrom === 'deck' && v.myTurn;
+  return `<div class="center" aria-label="Mazzo, scarti e carta in mano">
+    <div class="pile deck">${deck}<div class="pile-label">Mazzo · ${v.drawCount}</div></div>
+    <div class="pile">${discard}<div class="pile-label">Scarti</div></div>
+    <div class="pile${v.held !== null ? ' held' : ''}">${held}
+      <div class="pile-label">${canDiscard ? '<button data-act="discard" class="btn-mini">Scarta</button>' : 'In mano'}</div></div>
   </div>`;
 }
 
-function sheetHtml(st, v) {
+// Pannello di fine round / partita. Su telefono sta in basso (si può nascondere per vedere le carte),
+// su schermo largo prende il posto del mazzo, al centro tra i due tavoli.
+function sheetHtml(st, v, hidden) {
+  let title, sub, table, actions;
   if (v.phase === 'roundOver') {
     const r = v.lastRound;
     const fin = st.game.players[r.finisher].name;
     const rows = v.players.map((p, i) => `<tr>
-        <td class="py-1.5">${esc(p.name)}${r.finisher === i ? ' ★' : ''}</td>
-        <td class="py-1.5 text-right tabular-nums">${r.doubled && r.finisher === i ? `${r.raw[i]} ×2 = ${r.scores[i]}` : r.scores[i]}</td>
-        <td class="py-1.5 text-right font-bold tabular-nums">${p.total}</td></tr>`).join('');
-    return `<div class="fixed inset-x-0 bottom-0 z-20 rounded-t-3xl bg-slate-900 p-5 pb-6 shadow-2xl ring-1 ring-slate-700">
-      <h2 class="text-lg font-bold">Round ${r.round} finito</h2>
-      <p class="text-sm text-slate-400">${esc(fin)} ha chiuso${r.doubled ? ' senza avere il punteggio più basso: punti raddoppiati' : ''}.</p>
-      <table class="my-3 w-full text-sm"><thead class="text-xs text-slate-400"><tr><th class="text-left font-medium">Giocatore</th><th class="text-right font-medium">Round</th><th class="text-right font-medium">Totale</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="grid gap-2">
-        <button data-act="next" class="${PRIMARY}">Prossimo round</button>
-        <button data-act="finish" class="${GHOST} !py-3 !text-base">Chiudi la partita qui</button>
-      </div></div>`;
-  }
-  if (v.phase === 'gameOver') {
+        <td>${esc(p.name)}${r.finisher === i ? ' ★' : ''}</td>
+        <td class="tr num">${r.doubled && r.finisher === i ? `${r.raw[i]} ×2 = ${r.scores[i]}` : r.scores[i]}</td>
+        <td class="tr num strong">${p.total}</td></tr>`).join('');
+    title = `Round ${r.round} finito`;
+    sub = `${esc(fin)} ha chiuso${r.doubled ? ' senza avere il punteggio più basso: punti raddoppiati' : ''}.`;
+    table = `<table class="tbl mt"><thead><tr><th>Giocatore</th><th class="tr">Round</th><th class="tr">Totale</th></tr></thead><tbody>${rows}</tbody></table>`;
+    actions = `<button data-act="next" class="btn btn-primary">Prossimo round</button>
+      <button data-act="finish" class="btn btn-ghost btn-sm">Chiudi la partita qui</button>`;
+  } else if (v.phase === 'gameOver') {
     const min = Math.min(...v.players.map((p) => p.total));
     const winners = v.players.filter((p) => p.total === min);
-    const title = winners.length === 1 ? `Vince ${esc(winners[0].name)}!` : 'Pareggio!';
     const rows = [...v.players].sort((a, b) => a.total - b.total).map((p) => `<tr>
-        <td class="py-1.5">${p.total === min ? '★ ' : ''}${esc(p.name)}</td>
-        <td class="py-1.5 text-right font-bold tabular-nums">${p.total}</td>
-        <td class="py-1.5 text-right text-slate-400 tabular-nums">${num(p.total / v.round)} a round</td></tr>`).join('');
-    return `<div class="fixed inset-x-0 bottom-0 z-20 rounded-t-3xl bg-slate-900 p-5 pb-6 shadow-2xl ring-1 ring-slate-700">
-      <h2 class="text-2xl font-black text-amber-400">${title}</h2>
-      <p class="text-sm text-slate-400">${v.round} ${v.round === 1 ? 'round giocato' : 'round giocati'} · la media più bassa vince</p>
-      <table class="my-3 w-full text-sm"><tbody>${rows}</tbody></table>
-      <div class="grid gap-2">
-        <button data-act="again" class="${PRIMARY}">Rivincita</button>
-        <button data-act="stats" class="${SECONDARY} !py-3 !text-base">Statistiche</button>
-        <button data-act="exit" class="${GHOST} !py-3 !text-base">Torna alla home</button>
-      </div></div>`;
-  }
-  return '';
+        <td>${p.total === min ? '★ ' : ''}${esc(p.name)}</td>
+        <td class="tr num strong">${p.total}</td>
+        <td class="tr num muted">${num(p.total / v.round)} a round</td></tr>`).join('');
+    title = `<span class="gold">${winners.length === 1 ? `Vince ${esc(winners[0].name)}!` : 'Pareggio!'}</span>`;
+    sub = `${v.round} ${v.round === 1 ? 'round giocato' : 'round giocati'} · la media più bassa vince`;
+    table = `<table class="tbl mt"><tbody>${rows}</tbody></table>`;
+    actions = `<button data-act="again" class="btn btn-primary">Rivincita</button>
+      <button data-act="stats" class="btn btn-secondary btn-sm">Statistiche</button>
+      <button data-act="exit" class="btn btn-ghost btn-sm">Torna alla home</button>`;
+  } else return '';
+  return `<div class="sheet-wrap${hidden ? ' collapsed' : ''}">
+    <div class="sheet" data-key="sheet">
+      <div class="row between"><h2>${title}</h2>
+        <button data-act="toggleSheet" class="btn-menu toggle-sheet" aria-label="Nascondi il risultato per vedere le carte">▾</button></div>
+      <p class="muted small">${sub}</p>
+      ${table}
+      <div class="stack-s mt-l">${actions}</div>
+    </div>
+    <button data-act="toggleSheet" class="btn-menu sheet-tab">▴ Mostra il risultato</button>
+  </div>`;
 }
 
 // ---------- schermate ----------
@@ -128,130 +131,122 @@ function homeHtml(st) {
   const s = st.saved;
   let resume = '';
   if (s && s.mode === 'local') {
-    resume = `<div class="rounded-2xl bg-slate-800 p-4">
-      <div class="text-sm text-slate-400">Partita in corso · Round ${s.round}</div>
-      <div class="font-semibold">${s.names.map((n, i) => `${esc(n)} ${s.totals[i]}`).join(' – ')}</div>
-      <div class="mt-3 flex gap-2">
-        <button data-act="resume" class="flex-1 rounded-xl bg-amber-400 py-3 font-semibold text-slate-900">Riprendi</button>
-        <button data-act="dropSaved" class="rounded-xl bg-slate-700 px-4 py-3 font-medium">Elimina</button>
+    resume = `<div class="panel pad stack-s">
+      <div class="eyebrow">Partita in corso · Round ${s.round}</div>
+      <div class="serif strong">${s.names.map((n, i) => `${esc(n)} ${s.totals[i]}`).join(' – ')}</div>
+      <div class="row mt-s">
+        <button data-act="resume" class="btn btn-primary btn-sm grow">Riprendi</button>
+        <button data-act="dropSaved" class="btn btn-secondary btn-sm" style="width:auto">Elimina</button>
       </div></div>`;
   } else if (s) {
-    resume = '<p class="rounded-2xl bg-slate-800 p-4 text-sm text-slate-400">Hai una partita online salvata: si riprende dalla modalità Online.</p>';
+    resume = '<p class="panel pad muted small">Hai una partita online salvata: si riprende dalla modalità Online.</p>';
   }
-  return `<main class="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-4 p-6">
-    <div class="mb-4 text-center">
-      <h1 class="text-6xl font-black tracking-tight text-amber-400">SKYJO</h1>
-      <p class="mt-2 text-slate-400">Fate meno punti possibile</p>
+  return `<main class="screen center-v">
+    <div class="brand">
+      <h1 class="brand-title">SKYJO</h1><div class="orn"></div>
+      <p class="muted">Fate meno punti possibile</p>
     </div>
     ${resume}
-    <button data-act="newLocal" class="${PRIMARY}">Pass &amp; Play<span class="block text-sm font-normal opacity-70">Un solo telefono, funziona anche senza Wi-Fi</span></button>
-    <button disabled class="${BTN} bg-slate-800/60 text-slate-500">Online · 2 telefoni<span class="block text-sm font-normal">In arrivo</span></button>
-    <button data-act="stats" class="${SECONDARY}">Statistiche</button>
+    <div class="stack">
+      <button data-act="newLocal" class="btn btn-primary">Pass &amp; Play<small>Un solo telefono, funziona anche senza Wi-Fi</small></button>
+      <button disabled class="btn btn-secondary">Online · 2 telefoni<small>In arrivo</small></button>
+      <button data-act="stats" class="btn btn-secondary">Statistiche</button>
+    </div>
   </main>`;
 }
 
 function setupHtml(d) {
   const cells = d.rows * d.cols;
-  const stepper = (label, field, val, hint) => `<div class="flex items-center justify-between gap-3">
-      <div><div class="font-medium">${label}</div>${hint ? `<div class="text-xs text-slate-400">${hint}</div>` : ''}</div>
-      <div class="flex items-center gap-3">
-        <button data-act="step" data-field="${field}" data-d="-1" class="h-11 w-11 rounded-full bg-slate-700 text-2xl" aria-label="Diminuisci ${label}">−</button>
-        <span class="w-8 text-center text-xl font-bold tabular-nums">${val}</span>
-        <button data-act="step" data-field="${field}" data-d="1" class="h-11 w-11 rounded-full bg-slate-700 text-2xl" aria-label="Aumenta ${label}">+</button>
+  const stepper = (label, field, val) => `<div class="row between">
+      <div class="strong">${label}</div>
+      <div class="row">
+        <button data-act="step" data-field="${field}" data-d="-1" class="round-btn" aria-label="Diminuisci ${esc(label)}">−</button>
+        <span class="stepper-val">${val}</span>
+        <button data-act="step" data-field="${field}" data-d="1" class="round-btn" aria-label="Aumenta ${esc(label)}">+</button>
       </div></div>`;
-  const input = (name, val, ph) => `<input data-input="${name}" value="${esc(val)}" placeholder="${ph}" maxlength="20" autocomplete="off"
-      class="w-full rounded-xl bg-slate-800 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-400">`;
+  const input = (name, val, ph) => `<input data-input="${name}" value="${esc(val)}" placeholder="${ph}" maxlength="20" autocomplete="off" class="field">`;
   const presets = [[3, 4, 'Classico 3×4'], [4, 5, 'Variante 4×5']]
     .map(([r, c, l]) => chip(l, d.rows === r && d.cols === c, `data-act="preset" data-rows="${r}" data-cols="${c}"`)).join('');
   const targets = [100, 150, 200, null]
     .map((t) => chip(t === null ? 'Nessun limite' : t, d.target === t, `data-act="target" data-v="${t === null ? 'none' : t}"`)).join('');
-  return `<main class="mx-auto min-h-dvh max-w-md space-y-6 p-5 pb-10">
-    <header class="flex items-center justify-between">
-      <h1 class="text-2xl font-black">Nuova partita</h1>
-      <button data-act="back" class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm">Indietro</button>
-    </header>
-    <section class="space-y-2"><h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Giocatori</h2>
-      ${input('n1', d.n1, 'Giocatore 1')}${input('n2', d.n2, 'Giocatore 2')}</section>
-    <section class="space-y-3"><h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Griglia</h2>
-      <div class="flex flex-wrap gap-2">${presets}</div>
+  return `<main class="screen">
+    <header class="row between"><h1 class="page-title">Nuova partita</h1><button data-act="back" class="btn-menu">Indietro</button></header>
+    <section class="panel pad stack-s"><div class="eyebrow">Giocatori</div>${input('n1', d.n1, 'Giocatore 1')}${input('n2', d.n2, 'Giocatore 2')}</section>
+    <section class="panel pad stack"><div class="eyebrow">Griglia</div>
+      <div class="wrap">${presets}</div>
       ${stepper('Righe', 'rows', d.rows)}
       ${stepper('Colonne', 'cols', d.cols)}
-      <p class="text-xs text-slate-400">${cells} carte a testa</p></section>
-    <section class="space-y-3"><h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Regole</h2>
+      <p class="muted tiny">${cells} carte a testa</p></section>
+    <section class="panel pad stack"><div class="eyebrow">Regole</div>
       ${stepper('Carte scoperte all\'inizio', 'reveal', d.reveal)}
-      <div><div class="mb-2 font-medium">Si gioca fino a</div><div class="flex flex-wrap gap-2">${targets}</div></div></section>
-    <button data-act="start" class="${PRIMARY}">Inizia</button>
+      <div><div class="strong" style="margin-bottom:8px">Si gioca fino a</div><div class="wrap">${targets}</div></div></section>
+    <button data-act="start" class="btn btn-primary">Inizia</button>
   </main>`;
 }
 
 function statsHtml(st, board) {
   const games = recentGames(st.stats, 15);
-  const stat = (label, val) => `<div class="rounded-xl bg-slate-900/60 py-2"><div class="font-bold tabular-nums">${val ?? '–'}</div><div class="text-xs text-slate-400">${label}</div></div>`;
+  const stat = (label, val) => `<div class="stat"><b>${val ?? '–'}</b><span>${label}</span></div>`;
   const boardHtml = board.length
-    ? board.map((p, i) => `<section class="rounded-2xl bg-slate-800 p-4">
-        <div class="flex items-baseline justify-between">
-          <div class="text-lg font-bold">${i === 0 && board.length > 1 ? '★ ' : ''}${esc(p.name)}</div>
-          <div class="text-right"><div class="text-3xl font-black tabular-nums text-amber-400">${num(p.avgPerRound)}</div><div class="text-xs text-slate-400">punti / round</div></div>
+    ? board.map((p, i) => `<section class="panel pad">
+        <div class="row between">
+          <div class="seat-name">${i === 0 && board.length > 1 ? '★ ' : ''}${esc(p.name)}</div>
+          <div class="tr"><div class="serif num gold" style="font-size:2rem;font-weight:700;line-height:1">${num(p.avgPerRound)}</div><div class="muted tiny">punti / round</div></div>
         </div>
-        <div class="mt-3 grid grid-cols-3 gap-2 text-center text-sm">
+        <div class="grid3 mt">
           ${stat('Vittorie', `${p.gamesWon}/${p.gamesPlayed}`)}${stat('Round', p.roundsPlayed)}${stat('Punti totali', p.totalPoints)}
           ${stat('Round vinti', p.roundsWon)}${stat('Migliore', p.bestRound)}${stat('Peggiore', p.worstRound)}
         </div>
-        <div class="mt-2 text-xs text-slate-400">Chiusure: ${p.roundsClosed} · Penalità raddoppio: ${p.penalties}</div>
+        <div class="muted tiny mt-s">Chiusure: ${p.roundsClosed} · Penalità raddoppio: ${p.penalties}</div>
       </section>`).join('')
-    : '<p class="rounded-2xl bg-slate-800 p-4 text-slate-400">Nessuna partita registrata. Finite una partita per vedere le statistiche.</p>';
-  const hist = games.map((g) => `<li class="rounded-xl bg-slate-800 px-4 py-3">
-      <div class="flex justify-between text-xs text-slate-400">
+    : '<p class="panel pad muted">Nessuna partita registrata. Finite una partita per vedere le statistiche.</p>';
+  const hist = games.map((g) => `<li class="history-item">
+      <div class="row between muted tiny">
         <span>${new Date(g.date).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
         <span>${g.config.rows}×${g.config.cols} · ${g.rounds.length} round${g.mode === 'remote' ? ' · online' : ''}</span></div>
-      <div class="mt-1 flex justify-between gap-2">${g.players.map((p, i) =>
-        `<span class="${g.winners.includes(i) ? 'font-bold text-amber-300' : 'text-slate-300'}">${g.winners.includes(i) ? '★ ' : ''}${esc(p.name)} ${p.total}</span>`).join('')}</div>
+      <div class="row between mt-s">${g.players.map((p, i) =>
+        `<span class="${g.winners.includes(i) ? 'strong gold' : ''}">${g.winners.includes(i) ? '★ ' : ''}${esc(p.name)} ${p.total}</span>`).join('')}</div>
     </li>`).join('');
-  return `<main class="mx-auto min-h-dvh max-w-md space-y-4 p-5 pb-10">
-    <header class="flex items-center justify-between">
-      <h1 class="text-2xl font-black">Statistiche</h1>
-      <button data-act="back" class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm">Indietro</button>
-    </header>
-    <p class="text-xs text-slate-400">Classifica per media punti a round: vince la media più bassa.</p>
+  return `<main class="screen">
+    <header class="row between"><h1 class="page-title">Statistiche</h1><button data-act="back" class="btn-menu">Indietro</button></header>
+    <p class="muted tiny">Classifica per media punti a round: vince la media più bassa.</p>
     ${boardHtml}
-    ${games.length ? `<h2 class="pt-2 text-sm font-semibold uppercase tracking-wide text-slate-400">Ultime partite</h2><ul class="space-y-2">${hist}</ul>` : ''}
-    <div class="grid grid-cols-2 gap-2 pt-2">
-      <button data-act="export" class="rounded-xl bg-slate-800 py-3 text-sm font-semibold">Esporta backup</button>
-      <label class="cursor-pointer rounded-xl bg-slate-800 py-3 text-center text-sm font-semibold">Importa backup
-        <input id="importFile" type="file" accept="application/json,.json" class="hidden"></label>
+    ${games.length ? `<div class="eyebrow">Ultime partite</div><ul class="list">${hist}</ul>` : ''}
+    <div class="grid2 mt">
+      <button data-act="export" class="btn btn-secondary btn-sm">Esporta backup</button>
+      <label class="btn btn-secondary btn-sm" style="cursor:pointer">Importa backup
+        <input id="importFile" type="file" accept="application/json,.json" hidden></label>
     </div>
   </main>`;
 }
 
-function gameHtml(st) {
+function gameHtml(st, sheetHidden) {
   const v = selectView(st);
   const remote = st.mode !== 'local';
-  const me = v.players[remote ? st.seat : (v.current ?? 0)];
-  const others = v.players.filter((p) => p !== me);
-  const sheet = sheetHtml(st, v);
+  // In locale l'ordine è fisso (giocatore 1 poi giocatore 2). Online "io" sta sempre per ultimo.
+  const ordered = remote ? [...v.players.filter((p) => p.index !== st.seat), v.players[st.seat]] : v.players;
+  const seats = ordered.map((p) => seatHtml(st, v, p));
+  const sheet = sheetHtml(st, v, sheetHidden);
   const yourTurn = v.phase === 'initialReveal' || v.myTurn;
-  return `<div class="${sheet ? 'pb-80' : 'pb-8'}">
-    <header class="flex items-center justify-between px-4 pb-1 pt-3 text-sm text-slate-400">
-      <span>Round ${v.round} · ${v.targetScore ? `obiettivo ${v.targetScore}` : 'senza limite'}</span>
-      <button data-act="menu" class="rounded-lg bg-slate-800 px-3 py-1.5 text-slate-200">Menu</button>
+  return `<div class="stage${sheet && !sheetHidden ? ' with-sheet' : ''}">
+    <header class="topbar">
+      <div><div class="serif strong" style="font-size:1.25rem">Round ${v.round}</div>
+        <div class="muted tiny">${v.targetScore ? `Si gioca fino a ${v.targetScore}` : 'Senza limite di punti'}</div></div>
+      <button data-act="menu" class="btn-menu">Menu</button>
     </header>
-    <div class="mx-3 my-2 rounded-xl bg-slate-800 px-4 py-2.5 text-center font-medium ${yourTurn ? 'text-amber-300' : 'text-slate-300'}" role="status">${esc(v.hint)}</div>
-    <div class="space-y-3">${others.map((p) => playerBlock(st, v, p, { compact: true })).join('')}</div>
-    ${pilesHtml(v)}
-    ${playerBlock(st, v, me, { compact: false })}
-  </div>${sheet}`;
+    <div class="hint panel${yourTurn ? ' hot' : ''}" role="status">${esc(v.hint)}</div>
+    <div class="table${sheet ? ' has-sheet' : ''}">${[seats[0], pilesHtml(v), ...seats.slice(1), sheet].join('')}</div>
+  </div>`;
 }
 
-const menuHtml = () => `<div class="fixed inset-0 z-30 flex items-end bg-black/60">
-  <div class="w-full space-y-2 rounded-t-3xl bg-slate-900 p-5 pb-6">
-    <button data-act="stats" class="${SECONDARY}">Statistiche</button>
-    <button data-act="exit" class="${BTN} bg-rose-600/90 text-white">Esci dalla partita</button>
-    <button data-act="closeMenu" class="${GHOST}">Chiudi</button>
+const menuHtml = () => `<div class="overlay"><div class="sheet stack-s">
+    <button data-act="stats" class="btn btn-secondary">Statistiche</button>
+    <button data-act="exit" class="btn btn-danger">Esci dalla partita</button>
+    <button data-act="closeMenu" class="btn btn-ghost">Chiudi</button>
   </div></div>`;
 
 const toastHtml = (t) => (t
-  ? `<div class="pointer-events-none fixed inset-x-0 top-3 z-40 flex justify-center px-4" role="status" aria-live="polite">
-       <div class="rounded-full px-4 py-2 text-sm font-medium shadow-lg ${t.kind === 'error' ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-900'}">${esc(t.text)}</div></div>`
+  ? `<div class="toast-wrap" role="status" aria-live="polite"><div class="toast${t.kind === 'error' ? ' error' : ''}">${esc(t.text)}</div></div>`
   : '');
 
 // ---------- app ----------
@@ -262,7 +257,7 @@ export function createApp(store, opts = {}) {
   const later = opts.setTimeout ?? setTimeout;
   const download = opts.download ?? (() => {});
 
-  const ui = { menu: false, toast: null };
+  const ui = { menu: false, toast: null, sheetHidden: false };
   let lastError = null;
 
   function normalizeDraft(d) {
@@ -293,7 +288,7 @@ export function createApp(store, opts = {}) {
   function render() {
     const st = store.getState();
     let body;
-    if (st.screen === 'game' && st.game) body = gameHtml(st);
+    if (st.screen === 'game' && st.game) body = gameHtml(st, ui.sheetHidden);
     else if (st.screen === 'setup') body = setupHtml(draft);
     else if (st.screen === 'stats') body = statsHtml(st, store.leaderboard());
     else body = homeHtml(st);
@@ -302,6 +297,7 @@ export function createApp(store, opts = {}) {
   }
 
   function startGame(config) {
+    ui.sheetHidden = false;
     const r = store.startLocal(config);
     if (r.ok) store.dispatch({ type: 'START_ROUND' });
   }
@@ -310,7 +306,7 @@ export function createApp(store, opts = {}) {
     const st = store.getState();
     switch (d.act) {
       case 'newLocal': store.setScreen('setup'); break;
-      case 'resume': store.resumeLocal(); break;
+      case 'resume': ui.sheetHidden = false; store.resumeLocal(); break;
       case 'dropSaved': if (confirmFn('Eliminare la partita salvata?')) store.discardSaved(); break;
       case 'stats': ui.menu = false; store.setScreen('stats'); onChange(); break;
       case 'back': store.setScreen(st.game ? 'game' : 'home'); break;
@@ -341,8 +337,11 @@ export function createApp(store, opts = {}) {
       case 'draw': store.dispatch({ type: 'DRAW_DECK', player: st.game.current }); break;
       case 'take': store.dispatch({ type: 'TAKE_DISCARD', player: st.game.current }); break;
       case 'discard': store.dispatch({ type: 'DISCARD_DRAWN', player: st.game.current }); break;
-      case 'next': store.dispatch({ type: 'START_ROUND' }); break;
-      case 'finish': if (confirmFn('Chiudere la partita e registrare i punteggi?')) store.finishGame(); break;
+      case 'next': ui.sheetHidden = false; store.dispatch({ type: 'START_ROUND' }); break;
+      case 'finish':
+        if (confirmFn('Chiudere la partita e registrare i punteggi?')) { ui.sheetHidden = false; store.finishGame(); }
+        break;
+      case 'toggleSheet': ui.sheetHidden = !ui.sheetHidden; onChange(); break;
       case 'again': {
         const c = st.game.config;
         startGame({ playerNames: c.playerNames, rows: c.rows, cols: c.cols, initialReveal: c.initialReveal, targetScore: c.targetScore, doubleOnFail: c.doubleOnFail });
@@ -352,7 +351,7 @@ export function createApp(store, opts = {}) {
       case 'menu': ui.menu = true; onChange(); break;
       case 'closeMenu': ui.menu = false; onChange(); break;
       case 'exit':
-        if (confirmFn('Uscire dalla partita? Se non è finita andrà persa.')) { ui.menu = false; store.leave(); }
+        if (confirmFn('Uscire dalla partita? Se non è finita andrà persa.')) { ui.menu = false; ui.sheetHidden = false; store.leave(); }
         break;
 
       case 'export': download('skyjo-statistiche.json', store.exportStats()); break;

@@ -301,14 +301,16 @@ export function selectView(st) {
   if (g.phase === 'lobby') hint = ready ? 'Pronti? Inizia il round' : "In attesa dell'altro giocatore…";
   else if (g.phase === 'initialReveal') {
     const todo = players.filter((p) => p.needReveal > 0 && (!remote || p.isMe));
-    hint = todo.length
-      ? todo.map((p) => `${p.name}: scopri ${p.needReveal} ${p.needReveal === 1 ? 'carta' : 'carte'}`).join(' · ')
-      : "In attesa dell'altro giocatore…";
+    const carte = (n) => `${n} ${n === 1 ? 'carta' : 'carte'}`;
+    if (!todo.length) hint = "In attesa dell'altro giocatore…";
+    else if (remote) hint = `Scopri ${carte(todo[0].needReveal)}`;
+    else if (todo.length === players.length && todo.every((p) => p.needReveal === todo[0].needReveal)) hint = `Ognuno scopre ${carte(todo[0].needReveal)}`;
+    else hint = todo.map((p) => `${p.name}: scopri ${p.needReveal}`).join(' · ');
   } else if (g.phase === 'playing') {
     if (!myTurn) hint = `Tocca a ${g.players[g.current].name}`;
-    else if (g.turn.step === 'draw') hint = 'Pesca dal mazzo o prendi la carta degli scarti';
+    else if (g.turn.step === 'draw') hint = 'Pesca dal mazzo o prendi lo scarto';
     else if (g.turn.step === 'place')
-      hint = g.turn.from === 'deck' ? 'Scambiala con una carta della griglia oppure scartala' : 'Scambiala con una carta della griglia';
+      hint = g.turn.from === 'deck' ? 'Scambiala con una carta oppure scartala' : 'Scambiala con una carta';
     else if (g.turn.step === 'flip') hint = 'Scopri una carta coperta';
   } else if (g.phase === 'roundOver') hint = 'Round finito';
   else if (g.phase === 'gameOver') hint = 'Partita finita';

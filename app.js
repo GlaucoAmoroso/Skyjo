@@ -4,6 +4,7 @@ import { createApp } from './ui.js';
 import { diffEvents } from './skyjo-fx.js';
 import { capture, play } from './fx-dom.js';
 import { createOnline } from './transport-peerjs.js';
+import { selectView } from './skyjo-store.js';
 
 const root = document.getElementById('app');
 
@@ -19,7 +20,7 @@ function download(name, text) {
 // Online mode (PeerJS is only downloaded when a room is opened or joined).
 const net = createOnline();
 let hostTransport = null;
-const online = { ...net, host: async (code) => (hostTransport = await net.host(code)) };
+const online = { ...net, host: async (code, o) => (hostTransport = await net.host(code, o)) };
 
 const store = createStore();
 const THEME_KEY = 'skyjo:theme:v1';
@@ -29,7 +30,26 @@ const applyTheme = (t) => {
 };
 applyTheme(readTheme());
 const setTheme = (t) => { try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ } applyTheme(t); };
-const app = createApp(store, { onChange: paint, download, online, getTheme: readTheme, setTheme });
+// Vibration (can be switched off from the menu: it costs battery).
+const VIB_KEY = 'skyjo:vibrate:v1';
+const vibrationSupported = typeof navigator.vibrate === 'function';
+const readVibration = () => { try { return localStorage.getItem(VIB_KEY) !== 'off'; } catch { return true; } };
+const setVibration = (on) => { try { localStorage.setItem(VIB_KEY, on ? 'on' : 'off'); } catch { /* private mode */ } };
+const buzz = (pattern) => { if (vibrationSupported && readVibration()) { try { navigator.vibrate(pattern); } catch { /* ignore */ } } };
+let wasMyTurn = false;
+let lastReactionId = 0;
+function haptics(st) {
+  if (st.screen !== 'game' || !st.game || st.mode === 'local') { wasMyTurn = false; return; }
+  const my = selectView(st).myTurn;
+  if (my && !wasMyTurn) buzz([60, 40, 60]);
+  wasMyTurn = my;
+  if (st.reaction && st.reaction.id !== lastReactionId) {
+    lastReactionId = st.reaction.id;
+    if (st.reaction.from === 'them') buzz(40);
+  }
+}
+const app = createApp(store, { onChange: paint, download, online, getTheme: readTheme, setTheme,
+  getVibration: readVibration, setVibration, vibrationSupported });
 
 // "Smart" repaint: elements with a data-key whose HTML did not change stay the same DOM nodes,
 // so running animations are not interrupted by a later repaint.
@@ -52,10 +72,14 @@ function morph(html) {
 }
 
 let prevGame = null;
+let prevUndoSeq = 0;
 function paint() {
   const st = store.getState();
   const game = st.screen === 'game' ? st.game : null;
-  const events = diffEvents(prevGame, game); // what just happened, to animate
+  haptics(st);
+  const undone = st.undoSeq !== prevUndoSeq; // a move was taken back: just show the old state, no animation
+  prevUndoSeq = st.undoSeq;
+  const events = undone ? [] : diffEvents(prevGame, game); // what just happened, to animate
   const snap = capture(root, events);        // starting positions (before repainting)
   const scrollY = window.scrollY;
   morph(app.render());

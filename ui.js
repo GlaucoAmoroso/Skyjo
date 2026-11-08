@@ -4,11 +4,11 @@
 // app.js is the glue to the DOM (and animations), so the UI can be tested in Node.
 // All styling lives in styles.css.
 
-import { selectView, suggestedTarget, memoryStorage } from './skyjo-store.js';
+import { selectView, suggestedTarget, memoryStorage, EMOJIS } from './skyjo-store.js';
 import { recentGames } from './skyjo-stats.js';
 
 const SETUP_KEY = 'skyjo:setup:v1';
-const DEFAULT_DRAFT = { n1: '', n2: '', rows: 3, cols: 4, reveal: 2, target: 100, touched: false, joinName: '' };
+const DEFAULT_DRAFT = { n1: '', n2: '', rows: 3, cols: 4, reveal: 2, target: 100, touched: false, joinName: '', facing: true };
 
 // ---------- utilities ----------
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -71,11 +71,14 @@ function pilesHtml(v) {
   const canDraw = v.phase === 'playing' && v.myTurn && v.step === 'draw';
   const canTake = canDraw && v.discardTop !== null;
   const deck = card({ up: false }, { key: 'deck', act: canDraw ? 'draw' : '', hot: canDraw, label: 'Draw from the deck' });
-  const discard = v.discardTop === null
-    ? card(null, { key: 'discard' })
-    : card({ up: true, v: v.discardTop }, { key: 'discard', act: canTake ? 'take' : '', hot: canTake, label: `Take the discard, value ${v.discardTop}` });
-  const held = v.held === null ? card(null, { key: 'held' }) : card({ up: true, v: v.held }, { key: 'held' });
   const canDiscard = v.held !== null && v.heldFrom === 'deck' && v.myTurn;
+  // Tapping the discard pile does the obvious thing: take its top card, or drop the card you drew from the deck on it.
+  const discard = v.discardTop === null
+    ? card(null, { key: 'discard', act: canDiscard ? 'discard' : '', hot: canDiscard, label: 'Discard the card in your hand' })
+    : card({ up: true, v: v.discardTop }, canDiscard
+      ? { key: 'discard', act: 'discard', hot: true, label: 'Discard the card in your hand' }
+      : { key: 'discard', act: canTake ? 'take' : '', hot: canTake, label: `Take the discard, value ${v.discardTop}` });
+  const held = v.held === null ? card(null, { key: 'held' }) : card({ up: true, v: v.held }, { key: 'held' });
   return `<div class="center" aria-label="Deck, discard pile and held card">
     <div class="pile deck">${deck}<div class="pile-label">Deck · ${v.drawCount}</div></div>
     <div class="pile">${discard}<div class="pile-label">Discard</div></div>
@@ -210,6 +213,9 @@ function setupHtml(d, online) {
       ${stepper('Rows', 'rows', d.rows)}
       ${stepper('Columns', 'cols', d.cols)}
       <p class="muted tiny">${cells} cards each</p></section>
+    ${online ? '' : `<section class="panel pad stack-s"><div class="eyebrow">Seating (portrait phone)</div>
+      <div class="wrap">${chip('Face to face', d.facing !== false, 'data-act="facing" data-v="1"')}${chip('Same side', d.facing === false, 'data-act="facing" data-v="0"')}</div>
+      <p class="muted tiny">Face to face turns the top table upside down, so you can sit on opposite sides of the phone.</p></section>`}
     <section class="panel pad stack"><div class="eyebrow">Rules</div>
       ${stepper('Cards revealed at the start', 'reveal', d.reveal)}
       <div><div class="strong" style="margin-bottom:8px">Play until</div><div class="wrap">${targets}</div></div></section>
@@ -222,7 +228,7 @@ function connectingHtml(st, ui) {
   const code = esc(ui.pending?.code ?? st.roomCode ?? '');
   const lost = st.connection === 'lost';
   const title = guest ? `Joining room ${code}` : 'Opening your room…';
-  const sub = lost ? "Can't reach the room yet. Trying again…" : guest ? 'Connecting to the host…' : 'Setting things up…';
+  const sub = ui.pending?.note ? esc(ui.pending.note) : lost ? "Can't reach the room yet. Trying again…" : guest ? 'Connecting to the host…' : 'Setting things up…';
   return `<main class="screen center-v tc">
     <div class="spinner" role="progressbar" aria-label="Connecting"></div>
     <h1 class="page-title">${title}</h1>
@@ -263,7 +269,8 @@ function statsHtml(st, board) {
   const boardHtml = board.length
     ? board.map((p, i) => `<section class="panel pad">
         <div class="row between">
-          <div class="seat-name">${i === 0 && board.length > 1 ? '★ ' : ''}${esc(p.name)}</div>
+          <div><div class="seat-name">${i === 0 && board.length > 1 ? '★ ' : ''}${esc(p.name)}</div>
+            <button data-act="resetPlayer" data-name="${esc(p.name)}" class="btn-mini danger" aria-label="Reset the stats of ${esc(p.name)}">Reset</button></div>
           <div class="tr"><div class="serif num gold" style="font-size:2rem;font-weight:700;line-height:1">${num(p.avgPerRound)}</div><div class="muted tiny">points / round</div></div>
         </div>
         <div class="grid3 mt">
@@ -293,13 +300,15 @@ function statsHtml(st, board) {
   </main>`;
 }
 
-function gameHtml(st, sheetHidden) {
+function gameHtml(st, sheetHidden, facing = true) {
   const v = selectView(st);
   const remote = st.mode !== 'local';
   const lobby = v.phase === 'lobby' && remote;
   // Locally the order is fixed (player 1 then player 2). Online "me" is always last (bottom).
   const ordered = remote ? [...v.players.filter((p) => p.index !== st.seat), v.players[st.seat]] : v.players;
   const seats = ordered.map((p) => seatHtml(st, v, p));
+  // Pass & Play on a portrait phone: the top table is turned round so the two players sit face to face.
+  if (!remote && facing) seats[0] = seats[0].replace('class="seat ', 'class="seat opp ');
   const sheet = sheetHtml(st, v, sheetHidden);
   const yourTurn = v.phase === 'initialReveal' || v.myTurn;
   const other = remote ? st.game.players[st.seat === 0 ? 1 : 0].name : '';
@@ -314,7 +323,7 @@ function gameHtml(st, sheetHidden) {
     <header class="topbar">
       <div><div class="serif strong" style="font-size:1.25rem">${lobby ? 'Room' : `Round ${v.round}`}</div>
         <div class="muted tiny">${v.targetScore ? `Play until ${v.targetScore}` : 'No point limit'}</div></div>
-      <button data-act="menu" class="btn-menu">Menu</button>
+      <div class="row">${remote && !lobby ? '<button data-act="emojiToggle" class="btn-menu" aria-label="Send a reaction">😊</button>' : ''}${v.canUndo ? '<button data-act="undo" class="btn-menu" aria-label="Take back the last move">↶ Undo</button>' : ''}<button data-act="menu" class="btn-menu">Menu</button></div>
     </header>
     ${banner}
     ${lobby ? '' : `<div class="hint panel${yourTurn ? ' hot' : ''}" role="status">${esc(v.hint)}</div>`}
@@ -322,15 +331,27 @@ function gameHtml(st, sheetHidden) {
   </div>`;
 }
 
-function menuHtml(st) {
+function menuHtml(st, vibration = true, vibSupported = true) {
   const host = st.mode === 'host';
   const local = st.mode === 'local';
   return `<div class="overlay"><div class="sheet stack-s">
     <button data-act="stats" class="btn btn-secondary">Stats</button>
+    ${!local && vibSupported ? `<div class="row between panel pad"><div><div class="strong">Vibration</div><div class="muted tiny">Buzz when it's your turn or a reaction arrives. Uses a little battery.</div></div>
+      <div class="row">${chip('On', vibration, 'data-act="vibration" data-v="1"')}${chip('Off', !vibration, 'data-act="vibration" data-v="0"')}</div></div>` : ''}
     ${host ? '<button data-act="pause" class="btn btn-secondary">Pause &amp; leave<small>Keeps the game so you can reopen the room</small></button>' : ''}
     <button data-act="${local ? 'exit' : 'leaveOnline'}" class="btn btn-danger">${local ? 'Quit game' : host ? 'End the game for both' : 'Leave the game'}</button>
     <button data-act="closeMenu" class="btn btn-ghost">Close</button>
   </div></div>`;
+}
+
+// Quick reactions: a palette (opened by the 😊 button) and the bubble that floats up for a moment.
+function reactionHtml(ui) {
+  const bar = ui.emojiOpen
+    ? `<div class="emoji-bar" role="group" aria-label="Reactions">${EMOJIS.map((e) => `<button data-act="emoji" data-e="${e}" class="emoji-btn" aria-label="Send ${e}">${e}</button>`).join('')}</div>`
+    : '';
+  const r = ui.reaction;
+  const bubble = r ? `<div class="reaction ${r.from === 'me' ? 'mine' : 'theirs'}" data-key="react-${r.id}" aria-live="polite">${r.e}</div>` : '';
+  return bar + bubble;
 }
 
 const toastHtml = (t) => (t
@@ -344,13 +365,15 @@ export function createApp(store, opts = {}) {
   const confirmFn = opts.confirm ?? ((m) => (typeof globalThis.confirm === 'function' ? globalThis.confirm(m) : true));
   const later = opts.setTimeout ?? setTimeout;
   const download = opts.download ?? (() => {});
+  const getVibration = opts.getVibration ?? (() => true);
+  const vibrationSupported = opts.vibrationSupported ?? true;
   const getTheme = opts.getTheme ?? (() => 'auto');
   const online = opts.online ?? null; // { newCode, normalize, host(code)->Promise<transport>, join(code)->transport }
   const clipboard = opts.clipboard ?? (async (text) => { await globalThis.navigator?.clipboard?.writeText(text); });
   const share = opts.share ?? (async (data) => { if (!globalThis.navigator?.share) throw new Error('no share'); await globalThis.navigator.share(data); });
 
   // pending: a connection attempt that has not reached the store yet. joinCode: where the guest reconnects to.
-  const ui = { menu: false, toast: null, sheetHidden: false, setupFor: 'local', pending: null, joinCode: '', code: '', retrying: false };
+  const ui = { emojiOpen: false, reaction: null, lastReaction: 0, menu: false, toast: null, sheetHidden: false, setupFor: 'local', pending: null, joinCode: '', code: '', retrying: false };
   let lastError = null;
 
   function normalizeDraft(d) {
@@ -387,6 +410,12 @@ export function createApp(store, opts = {}) {
     if (st.error && st.error !== lastError) later(() => store.clearError(), 3000);
     lastError = st.error;
     if (st.mode === 'guest' && st.connection === 'lost') scheduleRetry();
+    if (st.reaction && st.reaction.id !== ui.lastReaction) {
+      const r = st.reaction;
+      ui.lastReaction = r.id;
+      ui.reaction = r;
+      later(() => { if (ui.reaction === r) { ui.reaction = null; onChange(); } }, 2600);
+    }
     onChange();
   });
 
@@ -399,7 +428,7 @@ export function createApp(store, opts = {}) {
   function render() {
     const st = store.getState();
     let body;
-    if (st.screen === 'game' && st.game) body = gameHtml(st, ui.sheetHidden);
+    if (st.screen === 'game' && st.game) body = gameHtml(st, ui.sheetHidden, draft.facing !== false);
     else if (st.screen === 'setup') body = setupHtml(draft, ui.setupFor === 'online');
     else if (st.screen === 'online') body = onlineHtml();
     else if (st.screen === 'join') body = joinHtml(draft, ui.code);
@@ -407,7 +436,8 @@ export function createApp(store, opts = {}) {
     else if (st.screen === 'stats') body = statsHtml(st, store.leaderboard());
     else body = homeHtml(st, getTheme());
     const toast = st.error ? { text: st.error, kind: 'error' } : ui.toast;
-    return body + (ui.menu && st.game ? menuHtml(st) : '') + toastHtml(toast);
+    const online = st.game && st.mode !== 'local' && st.screen === 'game';
+    return body + (online ? reactionHtml(ui) : '') + (ui.menu && st.game ? menuHtml(st, getVibration(), vibrationSupported) : '') + toastHtml(toast);
   }
 
   function startGame(config) {
@@ -421,7 +451,9 @@ export function createApp(store, opts = {}) {
     ui.pending = { kind: 'host', code };
     store.setScreen('connecting');
     try {
-      const t = await online.host(code);
+      const t = await online.host(code, {
+        onRetry: (n) => { if (ui.pending) { ui.pending.note = `The previous session still holds this room. Trying again… (${n})`; onChange(); } },
+      });
       if (!ui.pending || ui.pending.code !== code) { t.close?.(); return; } // cancelled meanwhile
       ui.pending = null;
       ui.sheetHidden = false;
@@ -487,6 +519,7 @@ export function createApp(store, opts = {}) {
         break;
 
       case 'preset': draft.rows = +d.rows; draft.cols = +d.cols; normalizeDraft(draft); saveDraft(); onChange(); break;
+      case 'facing': draft.facing = d.v === '1'; saveDraft(); onChange(); break;
       case 'step':
         draft[d.field] += +d.d;
         normalizeDraft(draft); saveDraft(); onChange(); break;
@@ -509,6 +542,7 @@ export function createApp(store, opts = {}) {
         else if (v.phase === 'playing' && v.step === 'flip') store.dispatch({ type: 'FLIP', player, index });
         break;
       }
+      case 'undo': store.undo(); break;
       case 'draw': store.dispatch({ type: 'DRAW_DECK', player: st.game.current }); break;
       case 'take': store.dispatch({ type: 'TAKE_DISCARD', player: st.game.current }); break;
       case 'discard': store.dispatch({ type: 'DISCARD_DRAWN', player: st.game.current }); break;
@@ -535,6 +569,18 @@ export function createApp(store, opts = {}) {
         break;
 
       case 'theme': opts.setTheme?.(d.v); onChange(); break;
+      case 'resetPlayer': {
+        const who = d.name;
+        if (confirmFn(`Reset all the stats of ${who}? The other player's stats are not touched.`)
+          && confirmFn(`Really delete ${who}'s stats? This cannot be undone (export a backup first if unsure).`)) {
+          store.resetPlayerStats(who);
+          notify(`${who}'s stats were reset`);
+        }
+        break;
+      }
+      case 'emojiToggle': ui.emojiOpen = !ui.emojiOpen; onChange(); break;
+      case 'emoji': ui.emojiOpen = false; store.react(d.e); onChange(); break;
+      case 'vibration': opts.setVibration?.(d.v === '1'); onChange(); break;
       case 'export': download('skyjo-stats.json', store.exportStats()); break;
       default: break;
     }

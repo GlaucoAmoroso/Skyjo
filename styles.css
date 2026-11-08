@@ -156,7 +156,12 @@ ul.list { margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px
 .pile-label { min-height: 26px; display: flex; align-items: center; font-size: .72rem; color: var(--muted); white-space: nowrap; }
 
 /* schermo largo: i due tavoli affiancati, mazzo e scarti nel mezzo */
+/* face-to-face seating (Pass & Play, portrait): the top table is upside down */
+.seat.opp { transform: rotate(180deg); }
+.seat.opp .f-back::after { transform: translate(-50%, -52%) rotate(180deg); } /* keep the heart upright */
 @media (min-width: 820px) and (min-aspect-ratio: 5/4) {
+  .seat.opp { transform: none; }
+  .seat.opp .f-back::after { transform: translate(-50%, -48%); }
   .table { --chrome: 250px; --avail: calc(100vh - var(--chrome)); grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: start; gap: 32px; }
   @supports (height: 100dvh) { .table { --avail: calc(100dvh - var(--chrome)); } }
   .seat { max-width: none; padding: 14px 18px 20px; }
@@ -248,3 +253,16 @@ button.card:active { scale: .96; }
   .is-target, .spinner { animation: none; }
   * { transition-duration: .01ms !important; }
 }
+
+/* ---------- quick reactions ---------- */
+.emoji-bar { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 30; display: flex; gap: 0; padding: 6px 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 12px 30px rgba(var(--shadow-ink),.25); max-width: calc(100vw - 16px); }
+.emoji-btn { font-size: 1.45rem; line-height: 1; padding: 6px 4px; background: none; border: 0; border-radius: 12px; cursor: pointer; }
+.emoji-btn:active { background: var(--gold-soft); }
+.reaction { position: fixed; left: 50%; z-index: 31; font-size: 4rem; line-height: 1; pointer-events: none; text-shadow: 0 6px 18px rgba(var(--shadow-ink),.35);
+  animation: react-pop 2.6s ease-out forwards; }
+.reaction.theirs { top: 22%; } .reaction.mine { bottom: 18%; }
+@keyframes react-pop { 0% { opacity: 0; transform: translate(-50%, 24px) scale(.4); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 22% { transform: translate(-50%, 0) scale(1); }
+  80% { opacity: 1; transform: translate(-50%, -10px) scale(1); } 100% { opacity: 0; transform: translate(-50%, -30px) scale(.9); } }
+.btn-mini.danger { margin-top: 6px; color: var(--danger); border-color: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .reaction { animation: none; opacity: 1; transform: translateX(-50%); } }

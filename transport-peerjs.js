@@ -85,8 +85,9 @@ const sleep = (ms, st) => new Promise((r) => st(r, ms));
 // Resolves with a transport once the room id is registered on the broker.
 export async function openHost(code, opts = {}) {
   const setT = opts.setTimeout ?? setTimeout;
-  const retries = opts.retries ?? 4;
-  const retryDelay = opts.retryDelay ?? 1500;
+  // The broker keeps an id for up to ~a minute after an app was closed without a clean goodbye.
+  const retries = opts.retries ?? 40;
+  const retryDelay = opts.retryDelay ?? 2000;
   const Peer = opts.Peer ?? (await (opts.loadPeer ?? loadPeerJs)());
   const id = PREFIX + normalizeCode(code);
 
@@ -107,7 +108,7 @@ export async function openHost(code, opts = {}) {
     try { peer = await create(); break; } catch (e) {
       const taken = e && e.type === 'unavailable-id';
       // The broker may still hold the id of our previous session for a few seconds.
-      if (taken && attempt < retries) { await sleep(retryDelay, setT); continue; }
+      if (taken && attempt < retries) { opts.onRetry?.(attempt + 1, retries); await sleep(retryDelay, setT); continue; }
       throw new Error(taken ? 'That room code is still in use. Try again in a moment.'
         : 'Could not reach the online service. Check your connection.');
     }
@@ -161,7 +162,7 @@ export function createOnline(opts = {}) {
     newCode: () => newRoomCode(),
     normalize: normalizeCode,
     isValid: isValidCode,
-    host: (code) => openHost(code, opts),
+    host: (code, extra = {}) => openHost(code, { ...opts, ...extra }),
     join: (code) => openGuest(code, opts),
   };
 }

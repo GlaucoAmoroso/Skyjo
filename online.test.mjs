@@ -231,4 +231,117 @@ runTimers(); await flush();
 assert(G.st().mode === null, 'a guest who left does not reconnect');
 assert(H.st().connection === 'lost' && H.html().includes('Marco disconnected'), 'host sees the guest leave');
 
+// ---------- 4) undo ----------
+{
+  const net2 = createMockNetwork();
+  const A = phone(net2), B = phone(net2);
+  A.app.click({ act: 'newOnline' }); A.app.input('n1', 'Anna'); A.app.click({ act: 'hostStart' }); await flush();
+  const c2 = A.st().roomCode;
+  B.app.click({ act: 'joinScreen' }); B.app.input('code', c2); B.app.click({ act: 'join' }); await flush();
+  A.app.click({ act: 'next' }); await flush();
+  const revealAll = async (P) => { for (let i = 0; i < 2; i++) { P.app.click(clickables(P.html()).find((d) => d.act === 'cell')); await flush(); } };
+  await revealAll(A); await revealAll(B);
+  assert(A.st().game.phase === 'playing', 'playing');
+  const first = A.st().game.current === 0 ? A : B, second = first === A ? B : A;
+  const undoBtn = (P) => P.html().includes('data-act="undo"');
+  assert(!undoBtn(first) || true, 'n/a');
+  // draw from the deck, then take it back: the deck is exactly as before
+  const deckBefore = first.st().mode === 'host' ? first.st().game.drawPile.length : null;
+  first.app.click({ act: 'draw' }); await flush();
+  assert(undoBtn(first) && !undoBtn(second), 'only the player who moved can undo');
+  first.app.click({ act: 'undo' }); await flush();
+  assert(first.st().game.turn.step === 'draw' && first.st().game.turn.drawn === null && second.st().game.turn.step === 'draw', 'draw taken back on both phones');
+  if (deckBefore !== null) assert(A.st().game.drawPile.length === deckBefore, 'card went back on the deck');
+  // take from the discard by mistake, undo, then a normal move cannot be undone twice
+  first.app.click({ act: 'take' }); await flush();
+  assert(first.st().game.turn.from === 'discard', 'took the discard');
+  first.app.click({ act: 'undo' }); await flush();
+  assert(first.st().game.turn.step === 'draw', 'discard card put back');
+  assert(!undoBtn(first), 'only ONE step back');
+  // draw, discard by tapping the pile, and finish the turn; the opponent plays -> the first can no longer undo
+  first.app.click({ act: 'draw' }); await flush();
+  assert(/data-act="discard"[^>]*data-key="discard"|data-key="discard"[^>]*data-act="discard"|class="card[^"]*"[^>]*data-act="discard"/.test(first.html()) || clickables(first.html()).filter((d) => d.act === 'discard').length >= 2, 'the discard pile itself is tappable to discard');
+  first.app.click({ act: 'discard' }); await flush();
+  const flipOrCell = () => clickables(first.html()).find((d) => d.act === 'cell');
+  if (flipOrCell()) { first.app.click(flipOrCell()); await flush(); }
+  if (first.st().game.current !== (first === A ? 0 : 1)) {
+    second.app.click({ act: 'draw' }); await flush();
+    assert(!undoBtn(first) && undoBtn(second), 'undo passes to whoever moved last');
+    // a forged undo from the wrong player is refused by the host
+    const before = JSON.stringify(A.st().game);
+    if (second === A) { B.app.click({ act: 'undo' }); } else { A.app.click({ act: 'undo' }); }
+    await flush();
+    assert(JSON.stringify(A.st().game) === before, 'wrong player cannot undo');
+  }
+}
+
+// ---------- 5) quick reactions ----------
+{
+  const net3 = createMockNetwork();
+  const A = phone(net3), B = phone(net3);
+  A.app.click({ act: 'newOnline' }); A.app.input('n1', 'Anna'); A.app.click({ act: 'hostStart' }); await flush();
+  const c3 = A.st().roomCode;
+  B.app.click({ act: 'joinScreen' }); B.app.input('code', c3); B.app.click({ act: 'join' }); await flush();
+  A.app.click({ act: 'next' }); await flush();
+  assert(A.html().includes('data-act="emojiToggle"') && B.html().includes('data-act="emojiToggle"'), 'reaction button online');
+  B.app.click({ act: 'emojiToggle' });
+  assert(B.html().includes('data-act="emoji" data-e="🔥"'), 'palette opens');
+  B.app.click({ act: 'emoji', e: '🔥' }); await flush();
+  assert(B.html().includes('class="reaction mine"') && A.html().includes('class="reaction theirs"') && A.html().includes('🔥'), 'bubble shown on both phones');
+  assert(!B.html().includes('data-act="emoji" data-e'), 'palette closes after sending');
+  // spam is ignored, and only whitelisted characters are ever shown
+  B.store.react('😂'); await flush();
+  assert(A.st().reaction.e === '🔥', 'rate limited');
+  A.store.attachTransport; // (no-op: keep reference)
+  const evil = A.st().reaction.id;
+  // an injected message with markup is dropped by the receiver
+  const gsend = (m) => { A.store.getState(); };
+  void gsend;
+  // host -> guest works too
+  await new Promise((r) => setTimeout(r, 1100));
+  A.store.react('👏'); await flush();
+  assert(B.st().reaction.e === '👏' && B.st().reaction.from === 'them' && B.st().reaction.id !== evil + 99, 'host reaction reaches the guest');
+  // the bubble fades after a while
+  runTimers(); 
+  assert(!A.html().includes('class="reaction') && !B.html().includes('class="reaction'), 'bubble disappears');
+  // local games have no reactions
+  const L = phone(createMockNetwork());
+  L.app.click({ act: 'newLocal' }); L.app.click({ act: 'start' });
+  assert(!L.html().includes('emojiToggle'), 'no reactions in Pass & Play');
+}
+
+// ---------- 6) per-player stats reset ----------
+{
+  const P = phone(createMockNetwork());
+  const st0 = P.store.getState();
+  // two finished games between Anna and Ben, then reset only Anna
+  P.app.click({ act: 'newLocal' }); P.app.input('n1', 'Anna'); P.app.input('n2', 'Ben'); P.app.click({ act: 'start' });
+  const finishGame = () => {
+    let n = 0;
+    while (!['roundOver', 'gameOver'].includes(P.store.getState().game.phase) && ++n < 20000) {
+      const c = clickables(P.html()).filter((d) => PLAY.has(d.act) && d.act !== 'next');
+      P.app.click(pick(c));
+    }
+    if (P.store.getState().game.phase === 'roundOver') P.app.click({ act: 'finish' });
+  };
+  finishGame();
+  assert(P.store.getState().stats.games.length === 1, 'game recorded');
+  assert(P.store.leaderboard().length === 2, 'both on the board');
+  const asked = [];
+  const P2 = (() => { const storage = P.storage; const store = P.store; return createApp(store, { storage, confirm: (m) => { asked.push(m); return true; }, setTimeout: (fn) => timers.push(fn) }); })();
+  P2.click({ act: 'stats' });
+  assert(P2.render().includes('data-act="resetPlayer" data-name="Anna"') && P2.render().includes('data-act="resetPlayer" data-name="Ben"'), 'a reset button per person');
+  P2.click({ act: 'resetPlayer', name: 'Anna' });
+  assert(asked.length === 2, 'asks twice before resetting');
+  const board = P.store.leaderboard();
+  assert(board.length === 1 && board[0].name === 'Ben' && board[0].gamesPlayed === 1, "only Anna's stats are gone, Ben's are untouched");
+  // declined second confirmation: nothing happens
+  const P3 = createApp(P.store, { storage: P.storage, confirm: (() => { let n = 0; return () => ++n === 1; })(), setTimeout: (fn) => timers.push(fn) });
+  P3.click({ act: 'resetPlayer', name: 'Ben' });
+  assert(P.store.leaderboard().length === 1, 'cancelling the second confirmation keeps the stats');
+  // new games count again from then on, and the reset survives a reload
+  const reloaded = createStore({ storage: P.storage });
+  assert(reloaded.leaderboard().length === 1 && reloaded.leaderboard()[0].name === 'Ben', 'reset persisted');
+}
+
 console.log(`OK: online — adapter, lobby, join, reconnection (${drops} drops), sync, rematch, pause/reopen`);

@@ -93,6 +93,22 @@ assert(dl && dl.name.endsWith('.json') && JSON.parse(dl.text).games.length === 1
 app.click({ act: 'back' });
 assert(store.getState().screen === 'game', 'indietro riporta alla partita');
 
+// undo (local): take back the last move, only one step
+{
+  const { store: s3, app: a3 } = makeApp();
+  a3.click({ act: 'newLocal' }); a3.click({ act: 'start' });
+  while (s3.getState().game.phase === 'initialReveal') a3.click(clickables(a3.render()).find((d) => d.act === 'cell'));
+  assert(a3.render().includes('data-act="undo"'), 'undo offered after a move');
+  a3.click({ act: 'undo' });
+  assert(s3.getState().game.phase === 'initialReveal' && !a3.render().includes('data-act="undo"'), 'one step back, then nothing to undo');
+  while (s3.getState().game.phase === 'initialReveal') a3.click(clickables(a3.render()).find((d) => d.act === 'cell'));
+  a3.click({ act: 'draw' });
+  const hand = s3.getState().game.turn.drawn;
+  a3.click({ act: 'discard' }); // the discard pile itself is a 'discard' target while holding a deck card
+  assert(s3.getState().game.discardPile.at(-1) === hand, 'discarded onto the pile');
+  assert(a3.render().includes('class="seat opp '), 'portrait Pass & Play seats the top player face to face');
+}
+
 // rivincita: nuova partita con le stesse regole
 app.click({ act: 'again' });
 st = store.getState();

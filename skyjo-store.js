@@ -14,11 +14,11 @@
 //
 // Protocollo:
 //   guest -> host : {t:'hello', name} | {t:'action', action}
-//   guest -> host : {t:'rematch'}
+//   guest -> host : {t:'rematch'} | {t:'undo'} | {t:'emoji', e}   (host -> guest also sends {t:'emoji', e})
 //   host -> guest : {t:'welcome', seat, gameId} | {t:'state', gameId, state} | {t:'error', error}
 
 import { createGame, applyAction, redactForPeer } from './skyjo-engine.js';
-import { emptyStats, summarizeGame, addGame, computePlayerStats, exportStats, importStats } from './skyjo-stats.js';
+import { emptyStats, resetPlayer, summarizeGame, addGame, computePlayerStats, exportStats, importStats } from './skyjo-stats.js';
 
 const KEYS = { game: 'skyjo:game:v1', stats: 'skyjo:stats:v1' };
 
@@ -51,12 +51,16 @@ const clean = (name, fallback) => String(name ?? '').trim().slice(0, 20) || fall
 export const suggestedTarget = (rows, cols) => (rows * cols > 12 ? 150 : 100);
 
 // ---------- store ----------
+export const EMOJIS = ['👍', '😂', '😮', '😭', '😡', '👏', '🔥', '🤔'];
+
 export function createStore(opts = {}) {
   const storage = opts.storage ?? defaultStorage();
   const now = opts.now ?? Date.now;
   const uid = opts.uid ?? defaultUid;
   const listeners = new Set();
   let transport = null;
+  let undoSnap = null; // { game, player }: the state before the last move (one step back)
+  const UNDOABLE = new Set(['REVEAL', 'DRAW_DECK', 'TAKE_DISCARD', 'SWAP', 'DISCARD_DRAWN', 'FLIP']);
 
   const loadedStats = load(storage, KEYS.stats, null);
 
@@ -72,6 +76,9 @@ export function createStore(opts = {}) {
     error: null,
     stats: loadedStats && loadedStats.version === 1 ? loadedStats : emptyStats(),
     saved: null,         // riassunto della partita salvata, per il pulsante "Riprendi"
+    undoBy: null,        // host/local: player who can take back the last move (null = nothing to undo)
+    reaction: null,      // last quick emoji: { id, from: 'me' | 'them', e }
+    undoSeq: 0,          // bumps whenever a move is taken back (the UI skips animations then)
   };
   state.saved = readSaved();
 
@@ -111,8 +118,9 @@ export function createStore(opts = {}) {
   }
 
   // Unico punto in cui cambia lo stato di gioco: salva, registra le statistiche, notifica.
-  function commit(game) {
-    state = { ...state, game, error: null };
+  function commit(game, undo = null) {
+    undoSnap = undo;
+    state = { ...state, game, error: null, undoBy: undo ? undo.player : null };
     recordIfOver();
     if (game.phase === 'gameOver') storage.removeItem(KEYS.game);
     else persistGame();
@@ -131,7 +139,7 @@ export function createStore(opts = {}) {
 
   const broadcast = () => {
     if (state.mode !== 'host' || !transport) return;
-    transport.send({ t: 'state', gameId: state.gameId, state: redactForPeer(state.game) });
+    transport.send({ t: 'state', gameId: state.gameId, state: redactForPeer(state.game), undoBy: state.undoBy, undoSeq: state.undoSeq });
   };
 
   function onHostMessage(msg) {
@@ -152,19 +160,43 @@ export function createStore(opts = {}) {
       if (state.game.phase === 'gameOver') rematch();
     } else if (msg.t === 'action' && msg.action) {
       // il posto viene imposto dall'host: il guest non può muovere "per conto" dell'host
-      const r = applyAction(state.game, { ...msg.action, player: 1 });
+      const before = state.game;
+      const r = applyAction(before, { ...msg.action, player: 1 });
       if (!r.ok) { transport.send({ t: 'error', error: r.error }); return; }
-      commit(r.state);
+      commit(r.state, snapFor(before, msg.action, r.state));
       broadcast();
+    } else if (msg.t === 'emoji') {
+      gotEmoji(msg.e);
+    } else if (msg.t === 'undo') {
+      if (undoSnap && undoSnap.player === 1) undoMove();
+      else transport.send({ t: 'error', error: 'Nothing to undo' });
     }
+  }
+
+  // Quick reactions: a fixed whitelist, so nothing but these characters can ever arrive from the other phone.
+  let reactSeq = 0;
+  let lastReactAt = 0;
+  function gotEmoji(e) {
+    if (EMOJIS.includes(e)) set({ reaction: { id: ++reactSeq, from: 'them', e } });
+  }
+  function react(e) {
+    if (!EMOJIS.includes(e) || state.mode === 'local' || state.connection !== 'connected' || !transport) return { ok: false };
+    const t = now();
+    if (t - lastReactAt < 1000) return { ok: false }; // no spamming
+    lastReactAt = t;
+    transport.send({ t: 'emoji', e });
+    set({ reaction: { id: ++reactSeq, from: 'me', e } });
+    return { ok: true };
   }
 
   function onGuestMessage(msg) {
     if (msg.t === 'welcome') {
       set({ seat: msg.seat, gameId: msg.gameId, connection: 'connected' });
     } else if (msg.t === 'state') {
-      state = { ...state, gameId: msg.gameId, screen: 'game' };
-      commit(msg.state);
+      state = { ...state, gameId: msg.gameId, screen: 'game', undoSeq: msg.undoSeq ?? state.undoSeq };
+      commit(msg.state, msg.undoBy === 0 || msg.undoBy === 1 ? { game: null, player: msg.undoBy } : null);
+    } else if (msg.t === 'emoji') {
+      gotEmoji(msg.e);
     } else if (msg.t === 'error') {
       set({ error: msg.error });
     }
@@ -267,9 +299,36 @@ export function createStore(opts = {}) {
       return fail("Waiting for the other player");
     const r = applyAction(game, mode === 'host' ? { ...action, player: 0 } : action);
     if (!r.ok) return fail(r.error);
-    commit(r.state);
+    commit(r.state, snapFor(game, action, r.state));
     broadcast();
     return r;
+  }
+
+  // One step back is only kept for ordinary moves, never across a round / game boundary.
+  function snapFor(before, action, after) {
+    if (!UNDOABLE.has(action.type) || after.phase === 'gameOver') return null;
+    return { game: before, player: after.lastMove?.player ?? null };
+  }
+
+  function undoMove() {
+    if (!undoSnap) return fail('Nothing to undo');
+    const snap = undoSnap;
+    state = { ...state, undoSeq: state.undoSeq + 1 };
+    commit(snap.game, null);
+    broadcast();
+    return { ok: true };
+  }
+
+  // Take back the last move (one step). The guest asks the host.
+  function undo() {
+    if (state.mode === 'guest') {
+      if (state.connection !== 'connected' || !transport) return fail('You are not connected');
+      transport.send({ t: 'undo' });
+      return { ok: true, pending: true };
+    }
+    if (!state.game || state.game.phase === 'gameOver') return fail('Nothing to undo');
+    if (state.mode === 'host' && undoSnap?.player !== 0) return fail('Nothing to undo');
+    return undoMove();
   }
 
   const finishGame = () => dispatch({ type: 'END_GAME' });
@@ -277,13 +336,15 @@ export function createStore(opts = {}) {
   // Leave to the home screen but KEEP the saved game (host or local), so it can be resumed.
   function pause() {
     closeTransport();
-    state = { ...state, screen: 'home', mode: null, seat: null, gameId: null, roomCode: null, game: null, connection: 'none', error: null };
+    undoSnap = null;
+    state = { ...state, screen: 'home', mode: null, seat: null, gameId: null, roomCode: null, game: null, connection: 'none', error: null, undoBy: null };
     state = { ...state, saved: readSaved() };
     emit();
   }
 
   function leave() {
     closeTransport();
+    undoSnap = null;
     storage.removeItem(KEYS.game);
     state = { ...state, screen: 'home', mode: null, seat: null, gameId: null, roomCode: null, game: null, connection: 'none', error: null, saved: null };
     emit();
@@ -295,8 +356,13 @@ export function createStore(opts = {}) {
     setScreen: (screen) => set({ screen }),
     clearError: () => set({ error: null }),
     dispatch, startLocal, hostRemote, joinRemote, attachTransport,
-    resumeLocal, resumeHost, rematch, pause, discardSaved, finishGame, leave,
+    resumeLocal, resumeHost, rematch, pause, undo, react, discardSaved, finishGame, leave,
     leaderboard: () => computePlayerStats(state.stats),
+    resetPlayerStats(name) {
+      const stats = resetPlayer(state.stats, name, now());
+      save(storage, KEYS.stats, stats);
+      set({ stats });
+    },
     exportStats: () => exportStats(state.stats),
     importStats(json) {
       const { stats, added } = importStats(state.stats, json);
@@ -327,6 +393,8 @@ export function selectView(st) {
   }));
   const ready = !remote || st.connection === 'connected';
   const myTurn = g.phase === 'playing' && ready && (!remote || g.current === st.seat);
+  const canUndo = g.phase !== 'gameOver' && ready
+    && st.undoBy !== null && st.undoBy !== undefined && (st.mode === 'local' || st.undoBy === st.seat);
 
   let hint = '';
   if (g.phase === 'lobby') hint = ready ? 'Ready? Start the round' : "Waiting for the other player…";
@@ -357,6 +425,7 @@ export function selectView(st) {
     heldFrom: g.turn.from,
     drawCount: Array.isArray(g.drawPile) ? g.drawPile.length : g.drawPile.count,
     discardTop: g.discardPile.length ? g.discardPile[g.discardPile.length - 1] : null,
+    canUndo,
     canStartRound: (g.phase === 'lobby' || g.phase === 'roundOver') && ready,
     canFinishGame: g.phase === 'roundOver',
     lastRound: g.roundHistory.length ? g.roundHistory[g.roundHistory.length - 1] : null,

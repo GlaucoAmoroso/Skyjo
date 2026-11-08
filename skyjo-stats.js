@@ -9,7 +9,15 @@
 
 const nameKey = (name) => name.trim().toLowerCase();
 
-export const emptyStats = () => ({ version: 1, games: [] });
+export const emptyStats = () => ({ version: 1, games: [], resets: {} });
+
+// A player's numbers are reset by remembering WHEN: games up to that moment stop counting for that player only.
+const resetAt = (stats, name) => (stats.resets && stats.resets[nameKey(name)]) || 0;
+const counts = (stats, g, i) => g.date > resetAt(stats, g.players[i].name);
+
+export function resetPlayer(stats, name, date) {
+  return { ...stats, resets: { ...(stats.resets || {}), [nameKey(name)]: date } };
+}
 
 // Fotografia di una partita finita (o chiusa a mano a fine round).
 export function summarizeGame(game, { id, mode, date }) {
@@ -56,6 +64,7 @@ export function computePlayerStats(stats) {
 
   for (const g of stats.games) {
     g.players.forEach((p, i) => {
+      if (!counts(stats, g, i)) return;
       const s = get(p.name);
       s.gamesPlayed += 1;
       if (g.winners.includes(i)) s.gamesWon += 1;
@@ -63,6 +72,7 @@ export function computePlayerStats(stats) {
     for (const r of g.rounds) {
       const best = Math.min(...r.scores);
       r.scores.forEach((score, i) => {
+        if (!counts(stats, g, i)) return;
         const s = get(g.players[i].name);
         s.roundsPlayed += 1;
         s.totalPoints += score;
@@ -86,8 +96,10 @@ export function computePlayerStats(stats) {
     .sort((a, b) => (a.avgPerRound ?? Infinity) - (b.avgPerRound ?? Infinity));
 }
 
+// History hides a game only when every player in it has been reset since.
 export const recentGames = (stats, n = 20) =>
-  [...stats.games].sort((a, b) => b.date - a.date).slice(0, n);
+  stats.games.filter((g) => g.players.some((_, i) => counts(stats, g, i)))
+    .sort((a, b) => b.date - a.date).slice(0, n);
 
 // Backup / trasferimento tra dispositivi (localStorage può essere cancellato dal browser).
 export const exportStats = (stats) => JSON.stringify(stats, null, 2);
@@ -103,6 +115,10 @@ export function importStats(stats, json) {
     throw new Error('Unrecognised stats format');
   let out = stats;
   let added = 0;
+  // keep the latest reset of each player from either side
+  const resets = { ...(data.resets || {}) };
+  for (const [k, t] of Object.entries(stats.resets || {})) resets[k] = Math.max(resets[k] || 0, t);
+  out = { ...out, resets };
   for (const g of data.games.filter(isSummary)) {
     const next = addGame(out, g);
     if (next !== out) added += 1;

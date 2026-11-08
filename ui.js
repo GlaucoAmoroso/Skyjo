@@ -8,7 +8,7 @@ import { selectView, suggestedTarget, memoryStorage, EMOJIS } from './skyjo-stor
 import { recentGames } from './skyjo-stats.js';
 
 const SETUP_KEY = 'skyjo:setup:v1';
-const DEFAULT_DRAFT = { n1: '', n2: '', rows: 3, cols: 4, reveal: 2, target: 100, touched: false, joinName: '', facing: true };
+const DEFAULT_DRAFT = { n1: '', n2: '', rows: 3, cols: 4, reveal: 2, target: 100, touched: false, joinName: '' };
 
 // ---------- utilities ----------
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -213,9 +213,6 @@ function setupHtml(d, online) {
       ${stepper('Rows', 'rows', d.rows)}
       ${stepper('Columns', 'cols', d.cols)}
       <p class="muted tiny">${cells} cards each</p></section>
-    ${online ? '' : `<section class="panel pad stack-s"><div class="eyebrow">Seating (portrait phone)</div>
-      <div class="wrap">${chip('Face to face', d.facing !== false, 'data-act="facing" data-v="1"')}${chip('Same side', d.facing === false, 'data-act="facing" data-v="0"')}</div>
-      <p class="muted tiny">Face to face turns the top table upside down, so you can sit on opposite sides of the phone.</p></section>`}
     <section class="panel pad stack"><div class="eyebrow">Rules</div>
       ${stepper('Cards revealed at the start', 'reveal', d.reveal)}
       <div><div class="strong" style="margin-bottom:8px">Play until</div><div class="wrap">${targets}</div></div></section>
@@ -300,15 +297,13 @@ function statsHtml(st, board) {
   </main>`;
 }
 
-function gameHtml(st, sheetHidden, facing = true) {
+function gameHtml(st, sheetHidden) {
   const v = selectView(st);
   const remote = st.mode !== 'local';
   const lobby = v.phase === 'lobby' && remote;
   // Locally the order is fixed (player 1 then player 2). Online "me" is always last (bottom).
   const ordered = remote ? [...v.players.filter((p) => p.index !== st.seat), v.players[st.seat]] : v.players;
   const seats = ordered.map((p) => seatHtml(st, v, p));
-  // Pass & Play on a portrait phone: the top table is turned round so the two players sit face to face.
-  if (!remote && facing) seats[0] = seats[0].replace('class="seat ', 'class="seat opp ');
   const sheet = sheetHtml(st, v, sheetHidden);
   const yourTurn = v.phase === 'initialReveal' || v.myTurn;
   const other = remote ? st.game.players[st.seat === 0 ? 1 : 0].name : '';
@@ -428,7 +423,7 @@ export function createApp(store, opts = {}) {
   function render() {
     const st = store.getState();
     let body;
-    if (st.screen === 'game' && st.game) body = gameHtml(st, ui.sheetHidden, draft.facing !== false);
+    if (st.screen === 'game' && st.game) body = gameHtml(st, ui.sheetHidden);
     else if (st.screen === 'setup') body = setupHtml(draft, ui.setupFor === 'online');
     else if (st.screen === 'online') body = onlineHtml();
     else if (st.screen === 'join') body = joinHtml(draft, ui.code);
@@ -519,7 +514,6 @@ export function createApp(store, opts = {}) {
         break;
 
       case 'preset': draft.rows = +d.rows; draft.cols = +d.cols; normalizeDraft(draft); saveDraft(); onChange(); break;
-      case 'facing': draft.facing = d.v === '1'; saveDraft(); onChange(); break;
       case 'step':
         draft[d.field] += +d.d;
         normalizeDraft(draft); saveDraft(); onChange(); break;

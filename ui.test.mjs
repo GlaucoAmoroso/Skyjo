@@ -106,7 +106,6 @@ assert(store.getState().screen === 'game', 'indietro riporta alla partita');
   const hand = s3.getState().game.turn.drawn;
   a3.click({ act: 'discard' }); // the discard pile itself is a 'discard' target while holding a deck card
   assert(s3.getState().game.discardPile.at(-1) === hand, 'discarded onto the pile');
-  assert(a3.render().includes('class="seat opp '), 'portrait Pass & Play seats the top player face to face');
 }
 
 // rivincita: nuova partita con le stesse regole
